@@ -6,7 +6,14 @@ export default async (req: Request) => {
   if (req.method === "PUT") {
     const body = await req.json();
     const p = { ...DEFAULT_PROFILE, ...body };
-    p.menu = (p.menu || []).filter((m: any) => m.name).map((m: any) => ({ name: String(m.name).trim(), price: Number(m.price) || 0, category: m.category || "Other", tags: m.tags || [] }));
+    p.menu = (p.menu || []).filter((m: any) => m.name).map((m: any) => ({
+      name: String(m.name).trim(),
+      price: Number(m.price) || 0,
+      category: m.category || "Other",
+      tags: m.tags || [],
+      sizes: (m.sizes || []).filter((x: any) => x && x.label && Number(x.price) > 0).map((x: any) => ({ label: String(x.label), price: Number(x.price) })),
+      description: m.description || "",
+    }));
     p.latitude = Number(p.latitude);
     p.longitude = Number(p.longitude);
     await saveProfile(p);

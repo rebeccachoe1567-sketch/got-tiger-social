@@ -10,18 +10,22 @@ export function fullText(caption: string, hashtags: string[] = []) {
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[’']/g, "'");
+const pricesOf = (m: any): number[] => [m.price, ...(m.sizes || []).map((x: any) => x.price)].filter((p) => p > 0);
+const fmt = (p: number) => `$${p.toFixed(2)}`;
 
 export function verifyMenuClaims(text: string, profile: Profile) {
   const issues: Issue[] = [];
   const t = norm(text);
-  const mentioned = profile.menu.filter((m) => t.includes(norm(m.name)));
+  const found = profile.menu.filter((m) => t.includes(norm(m.name)));
+  // If "Coconut Brown Sugar" is mentioned, don't also treat it as a mention of a shorter overlapping name.
+  const mentioned = found.filter((m) => !found.some((n) => n !== m && n.name.length > m.name.length && norm(n.name).includes(norm(m.name))));
   const promoText = norm(profile.promotions.join(" | "));
 
   // Prices: every $ amount must exist on the menu or in an active promotion.
   const priceRe = /\$\s?(\d+(?:\.\d{1,2})?)/g;
   const prices = [...text.matchAll(priceRe)].map((m) => Number(m[1]));
   for (const p of prices) {
-    const onMenu = profile.menu.some((m) => m.price > 0 && Math.abs(m.price - p) < 0.005);
+    const onMenu = profile.menu.some((m) => pricesOf(m).some((q) => Math.abs(q - p) < 0.005));
     const inPromo = promoText.includes(String(p));
     if (!onMenu && !inPromo) issues.push({ severity: "high", problem: `Price $${p.toFixed(2)} does not match any menu item or active promotion.` });
   }
@@ -30,10 +34,11 @@ export function verifyMenuClaims(text: string, profile: Profile) {
     const idx = t.indexOf(norm(m.name));
     const window = text.slice(idx, idx + m.name.length + 40);
     const pm = window.match(/\$\s?(\d+(?:\.\d{1,2})?)/);
-    if (pm && !m.price) {
-      issues.push({ severity: "high", problem: `No price is on file for ${m.name}, so the post must not state one ($${Number(pm[1]).toFixed(2)}).` });
-    } else if (pm && Math.abs(Number(pm[1]) - m.price) > 0.005) {
-      issues.push({ severity: "high", problem: `${m.name} is listed at $${Number(pm[1]).toFixed(2)} but the menu price is $${m.price.toFixed(2)}.` });
+    const valid = pricesOf(m);
+    if (pm && !valid.length) {
+      issues.push({ severity: "high", problem: `No price is on file for ${m.name}, so the post must not state one (${fmt(Number(pm[1]))}).` });
+    } else if (pm && !valid.some((q) => Math.abs(q - Number(pm[1])) < 0.005)) {
+      issues.push({ severity: "high", problem: `${m.name} is listed at ${fmt(Number(pm[1]))} but the menu says ${valid.map(fmt).join(" / ")}.` });
     }
   }
 
@@ -47,7 +52,7 @@ export function verifyMenuClaims(text: string, profile: Profile) {
   }
 
   return {
-    menu_items_mentioned: mentioned.map((m) => (m.price ? `${m.name} ($${m.price.toFixed(2)})` : m.name)),
+    menu_items_mentioned: mentioned.map((m) => (pricesOf(m).length ? `${m.name} (${pricesOf(m).map(fmt).join(" / ")})` : m.name)),
     prices_found: prices.map((p) => `$${p.toFixed(2)}`),
     deal_language_found: deals,
     full_menu: profile.menu.map((m) => m.name),

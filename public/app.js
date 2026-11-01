@@ -317,7 +317,7 @@ async function loadFeed() {
     ? posts
         .map((p) => {
           const cat = menu[(p.plan?.menu_items || [])[0]] || "K-Dog";
-          const drink = cat !== "K-Dog";
+          const drink = cat !== "K-Dog" && cat !== "Add-on";
           const cls = drink ? "boba" : "";
           const emoji = drink ? "🧋" : "🌽";
           const body = esc(p.draft.caption) + (p.draft.hashtags?.length ? `\n\n<span class="ht">${p.draft.hashtags.map((h) => "#" + esc(h)).join(" ")}</span>` : "");
@@ -336,7 +336,7 @@ async function loadFeed() {
 async function loadProfile() {
   PROFILE = await api("/api/profile");
   const p = PROFILE;
-  $("#sampleNote").classList.toggle("hidden", !p.sample);
+  $("#sampleNote").classList.toggle("hidden", !(p.menu || []).some((m) => !m.price));
   $("#profileForm").innerHTML = `
     <div class="card">
       <h3>Basics</h3>
@@ -366,13 +366,13 @@ async function loadProfile() {
     </div>
     <div class="card full">
       <h3>Menu &amp; prices</h3>
-      <table class="menu-table"><thead><tr><th>Item</th><th>Price ($)</th><th>Category</th><th>Tags (comma separated)</th><th></th></tr></thead><tbody id="menuRows"></tbody></table>
+      <table class="menu-table"><thead><tr><th>Item</th><th>Price ($)</th><th>Other sizes <small>(e.g. Large 6, Bulb Cup 12.50)</small></th><th>Category</th><th>Tags</th><th>Description / flavors</th><th></th></tr></thead><tbody id="menuRows"></tbody></table>
       <div><button type="button" class="btn" id="addItem">+ Add item</button> <button type="button" class="btn ghost danger" id="resetDemo">Clear all demo posts &amp; logs</button></div>
     </div>`;
   const rows = $("#menuRows");
   const addRow = (m = { name: "", price: "", category: "K-Dog", tags: [] }) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td><input data-k="name" value="${esc(m.name)}"></td><td class="price"><input data-k="price" type="number" step="0.01" placeholder="not set" value="${m.price ? esc(m.price) : ""}"></td><td><input data-k="category" value="${esc(m.category)}"></td><td><input data-k="tags" value="${esc((m.tags || []).join(", "))}"></td><td><button type="button" class="x" title="Remove">×</button></td>`;
+    tr.innerHTML = `<td><input data-k="name" value="${esc(m.name)}"></td><td class="price"><input data-k="price" type="number" step="0.01" placeholder="not set" value="${m.price ? esc(m.price) : ""}"></td><td><input data-k="sizes" placeholder="—" value="${esc((m.sizes || []).map((x) => `${x.label} ${x.price}`).join(", "))}"></td><td><input data-k="category" value="${esc(m.category)}"></td><td><input data-k="tags" value="${esc((m.tags || []).join(", "))}"></td><td><input data-k="description" value="${esc(m.description || "")}"></td><td><button type="button" class="x" title="Remove">×</button></td>`;
     $(".x", tr).onclick = () => tr.remove();
     rows.appendChild(tr);
   };
@@ -398,14 +398,18 @@ $("#saveProfile").addEventListener("click", async () => {
     events: v("events").split("\n").map((l) => l.split("|").map((s) => s.trim())).filter((x) => x[0] && x[1]).map(([date, name]) => ({ date, name })),
     menu: $$("#menuRows tr").map((tr) => {
       const g = (k) => $(`[data-k=${k}]`, tr).value;
-      return { name: g("name"), price: Number(g("price")), category: g("category"), tags: g("tags").split(",").map((s) => s.trim()).filter(Boolean) };
+      const sizes = g("sizes").split(",").map((s) => s.trim()).filter(Boolean).map((s) => {
+        const m = s.match(/^(.*?)\s*\$?\s*(\d+(?:\.\d+)?)$/);
+        return m ? { label: m[1].trim(), price: Number(m[2]) } : null;
+      }).filter(Boolean);
+      return { name: g("name"), price: Number(g("price")), sizes, category: g("category"), tags: g("tags").split(",").map((s) => s.trim()).filter(Boolean), description: g("description") };
     }),
     platforms: PROFILE.platforms,
     sample: false,
   };
   try {
     PROFILE = await api("/api/profile", body, "PUT");
-    $("#sampleNote").classList.add("hidden");
+    $("#sampleNote").classList.toggle("hidden", !(PROFILE.menu || []).some((m) => !m.price));
     toast("Profile saved — the agents will use it from now on");
   } catch (e) {
     toast(e.message, 6000);

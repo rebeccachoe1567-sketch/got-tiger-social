@@ -162,7 +162,7 @@ async function offlineStrategist(input: any, profile: Profile, posts: any[], cou
   const used = new Set(recent.flatMap((r: any) => r.menu_items || []));
   const warm = !weather.unavailable && weather.days[1]?.high_f >= 70;
   const pool = [...profile.menu].sort((a, b) => Number(used.has(a.name)) - Number(used.has(b.name)));
-  const fresh = pool.filter((m) => !m.tags.some((t) => /halloween|seasonal special/i.test(t)));
+  const fresh = pool.filter((m) => m.category !== "Add-on" && !m.tags.some((t) => /halloween|seasonal special/i.test(t)));
   const pick = (cat: string, pref?: string) =>
     fresh.find((m) => m.category === cat && (!pref || m.tags.includes(pref)) && !used.has(m.name) && !chosen.has(m.name)) ||
     fresh.find((m) => m.category === cat && !chosen.has(m.name)) ||
@@ -216,7 +216,8 @@ export async function runWriter(input: { plan: any; previous?: any; feedback?: s
       run: ({ items }) => {
         const want = (items || []).map((s: string) => s.toLowerCase());
         const found = profile.menu.filter((m) => !want.length || want.some((w: string) => m.name.toLowerCase().includes(w) || w.includes(m.name.toLowerCase())));
-        return found.length ? found : profile.menu;
+        const addOns = profile.menu.filter((m) => m.category === "Add-on" && !found.includes(m));
+        return [...(found.length ? found : profile.menu), ...addOns].map((m) => ({ ...m, price: m.price ? m.price : "not on file" }));
       },
       summarize: (o) => o.slice(0, 3).map((m: any) => (m.price ? `${m.name} $${m.price}` : `${m.name} (no price on file)`)).join(", "),
     },
@@ -256,7 +257,7 @@ The example posts are already published: match their style, but write a NEW hook
 Pick hashtags mostly from the hashtag bank. Call corn dogs "K-Dogs".
 The shop is "${profile.name}". Its former name (${profile.former_name || "none"}) may still show on cups or signs; don't treat it as an error.
 Process: load the brand voice and platform rules, get exact menu details, write a draft, run check_draft, fix any issues, then submit.
-Never invent menu items, prices, hours or promotions. Only mention a price if get_menu_details shows one, and then exactly that price.
+Never invent menu items, prices, hours or promotions. Only mention a price if get_menu_details shows one, and then exactly that price (sizes and "with Potato" versions have their own prices). Never make allergen or diet claims (K-Dogs contain egg, milk and wheat).
 Before each tool call, write one short sentence about what you're doing.`;
 
   const userMessage =
