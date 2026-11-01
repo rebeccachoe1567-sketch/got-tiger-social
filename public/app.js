@@ -100,6 +100,7 @@ $("#planForm").addEventListener("submit", async (e) => {
   try {
     const strat = await api("/api/agents/strategist", { goal: $("#goal").value.trim(), count: Number($("#count").value) });
     $("#strategistTrace").innerHTML = traceHTML(strat.trace);
+    if (strat.mode === "offline") toast("⚠️ The AI wasn't reachable, so this run used backup mode (scripted captions). Wait a minute and run it again.", 9000);
     setState(st, "done", `planned ${strat.posts.length}`);
     $("#strategySummary").innerHTML = `<b>Strategy:</b> ${esc(strat.summary)}`;
     $("#strategySummary").classList.remove("hidden");
