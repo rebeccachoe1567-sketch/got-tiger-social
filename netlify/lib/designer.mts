@@ -6,8 +6,14 @@ import { getStore } from "@netlify/blobs";
 import type { Profile } from "./defaults.mts";
 
 const ASPECT: Record<string, string> = { Instagram: "4:5", Facebook: "4:5", TikTok: "9:16", Bluesky: "1:1" };
-const LOGO = "/brand/logo-badge.png";
-const STYLE_REFS = ["/brand/style-ghost.jpg", "/brand/style-coconut.jpg", "/brand/style-volcano.jpg", "/brand/style-fall.jpg"];
+const LOGO = "/brand/logo-ref.jpg";
+// Two style references per post keep the request under the free plan's size limit.
+function styleRefsFor(items: any[]) {
+  const cats = items.map((m) => m.category);
+  if (cats.includes("K-Dog")) return ["/brand/style-volcano.jpg", "/brand/style-ghost.jpg"];
+  if (cats.some((c) => c === "Slush" || c === "Lemonade" || c === "Soda")) return ["/brand/style-ghost.jpg", "/brand/style-coconut.jpg"];
+  return ["/brand/style-coconut.jpg", "/brand/style-fall.jpg"];
+}
 
 function imageModels() {
   return [Netlify.env.get("IMAGE_MODEL"), "gemini-2.5-flash-image", "gemini-2.5-flash-image-preview"].filter(
@@ -70,7 +76,8 @@ RULES: No prices, dates, URLs, phone numbers, discounts or health claims. No peo
 
 export async function generateGraphic(post: any, profile: Profile, origin: string, tweak?: string) {
   const ai = new GoogleGenAI({});
-  const [logo, ...styles] = await Promise.all([loadRef(origin, LOGO), ...STYLE_REFS.map((p) => loadRef(origin, p))]);
+  const items = (post.plan?.menu_items || []).map((n: string) => profile.menu.find((m) => m.name === n)).filter(Boolean);
+  const [logo, ...styles] = await Promise.all([loadRef(origin, LOGO), ...styleRefsFor(items).map((p) => loadRef(origin, p))]);
   const styleRefs = styles.filter(Boolean) as any[];
   const prompt = buildImagePrompt(post, profile, { tweak, hasLogo: !!logo, styleCount: styleRefs.length });
   const parts: any[] = [{ text: prompt }];
