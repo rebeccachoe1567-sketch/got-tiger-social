@@ -1,14 +1,19 @@
 // Designer step: turns a post's graphic concept into a finished, post-ready image.
 // Uses Google's image model through the Netlify AI Gateway (no API key of our own).
 // The model is given the shop's real logo and four of its real Instagram posts as references.
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, type Part } from "@google/genai";
 import { getStore } from "@netlify/blobs";
-import type { Profile } from "./defaults.mts";
+import type { MenuItem, Profile } from "./defaults.mts";
+import type { Graphic, Post } from "./types.mts";
 
 const ASPECT: Record<string, string> = { Instagram: "4:5", Facebook: "4:5", TikTok: "9:16", Bluesky: "1:1" };
 const LOGO = "/brand/logo-ref.jpg";
 // Two style references per post keep the request under the free plan's size limit.
-function styleRefsFor(items: any[]) {
+function itemsOf(post: Post, profile: Profile): MenuItem[] {
+  return (post.plan?.menu_items ?? []).map((n) => profile.menu.find((m) => m.name === n)).filter((m): m is MenuItem => !!m);
+}
+
+function styleRefsFor(items: MenuItem[]) {
   const cats = items.map((m) => m.category);
   if (cats.includes("K-Dog")) return ["/brand/style-volcano.jpg", "/brand/style-ghost.jpg"];
   if (cats.some((c) => c === "Slush" || c === "Lemonade" || c === "Soda")) return ["/brand/style-ghost.jpg", "/brand/style-coconut.jpg"];
@@ -25,7 +30,7 @@ export function imageAvailable() {
   return !!(Netlify.env.get("GEMINI_API_KEY") || Netlify.env.get("GOOGLE_GEMINI_BASE_URL")) && Netlify.env.get("FORCE_OFFLINE") !== "1";
 }
 
-async function loadRef(origin: string, path: string) {
+async function loadRef(origin: string, path: string): Promise<Part | null> {
   try {
     const r = await fetch(origin + path);
     if (!r.ok) return null;
@@ -36,12 +41,10 @@ async function loadRef(origin: string, path: string) {
   }
 }
 
-export function buildImagePrompt(post: any, profile: Profile, opts: { tweak?: string; hasLogo: boolean; styleCount: number }) {
-  const items = (post.plan?.menu_items || [])
-    .map((n: string) => profile.menu.find((m) => m.name === n))
-    .filter(Boolean);
-  const itemLines = items.map((m: any) => `${m.name} (${m.category}): ${m.description || m.tags.join(", ")}`);
-  const isDrink = items.length ? items.some((m: any) => m.category !== "K-Dog") : false;
+export function buildImagePrompt(post: Post, profile: Profile, opts: { tweak?: string; hasLogo: boolean; styleCount: number }) {
+  const items = itemsOf(post, profile);
+  const itemLines = items.map((m) => `${m.name} (${m.category}): ${m.description || m.tags.join(", ")}`);
+  const isDrink = items.length ? items.some((m) => m.category !== "K-Dog") : false;
   const headline = (post.draft?.headline || "").trim();
   const tagline = (post.draft?.tagline || "").trim();
   const refNote = [
@@ -75,26 +78,30 @@ ${headline ? `- Headline: "${headline}"\n` : ""}${tagline ? `- Tagline: "${tagli
 RULES: No prices, dates, URLs, phone numbers, discounts or health claims. No people or faces. No other brand names. Keep all text and the logo away from the outer 6% so nothing gets cropped.`;
 }
 
-export async function generateGraphic(post: any, profile: Profile, origin: string, tweak?: string) {
+function message(e: unknown) {
+  return e instanceof Error ? e.message : String(e);
+}
+
+export async function generateGraphic(post: Post, profile: Profile, origin: string, tweak?: string): Promise<Graphic> {
   const ai = new GoogleGenAI({});
-  const items = (post.plan?.menu_items || []).map((n: string) => profile.menu.find((m) => m.name === n)).filter(Boolean);
+  const items = itemsOf(post, profile);
   const [logo, ...styles] = await Promise.all([loadRef(origin, LOGO), ...styleRefsFor(items).map((p) => loadRef(origin, p))]);
-  const styleRefs = styles.filter(Boolean) as any[];
+  const styleRefs = styles.filter((s): s is Part => !!s);
   const prompt = buildImagePrompt(post, profile, { tweak, hasLogo: !!logo, styleCount: styleRefs.length });
-  const parts: any[] = [{ text: prompt }];
+  const parts: Part[] = [{ text: prompt }];
   if (logo) parts.push(logo);
   parts.push(...styleRefs);
 
-  let lastErr: any;
+  let lastErr: unknown;
   for (const model of imageModels()) {
     try {
-      const res: any = await ai.models.generateContent({
+      const res = await ai.models.generateContent({
         model,
         contents: [{ role: "user", parts }],
-        config: { responseModalities: ["IMAGE", "TEXT"], imageConfig: { aspectRatio: ASPECT[post.platform] || "4:5" } } as any,
+        config: { responseModalities: ["IMAGE", "TEXT"], imageConfig: { aspectRatio: ASPECT[post.platform] || "4:5" } },
       });
       const out = res.candidates?.[0]?.content?.parts || [];
-      const img = out.find((p: any) => p.inlineData?.mimeType?.startsWith("image/"));
+      const img = out.find((p) => p.inlineData?.mimeType?.startsWith("image/"));
       if (!img?.inlineData?.data) throw new Error("The image model returned no image");
       const bytes = Buffer.from(img.inlineData.data, "base64");
       const version = Date.now().toString(36);
@@ -109,14 +116,14 @@ export async function generateGraphic(post: any, profile: Profile, origin: strin
         generatedAt: new Date().toISOString(),
         tweak: tweak || null,
       };
-    } catch (e: any) {
+    } catch (e) {
       lastErr = e;
-      const msg = String(e?.message || e);
+      const msg = message(e);
       if (/not found|404|not supported|unknown model/i.test(msg)) continue;
       throw e;
     }
   }
-  throw lastErr || new Error("No image model available");
+  throw lastErr instanceof Error ? lastErr : new Error(lastErr ? message(lastErr) : "No image model available");
 }
 
 export async function getGraphic(id: string) {

@@ -56,7 +56,7 @@ export const DEFAULT_PROFILE: Profile = {
   example_posts: [
     "Who you gon call? (Ghost Charge, a Green Apple Energy Slush, for spooky season)",
     "Sweet swirls. Creamy coconut. Your next boba crush. 🤎🥥🧋 Coconut Brown Sugar is calling!",
-    "Think you can handle the heat? 🌋🔥 Try our NEW Volcano with Buldak Mayo — spicy, crunchy, and seriously addictive!",
+    "Think you can handle the heat? 🌋🔥 Try our NEW Volcano with Buldak Mayo: spicy, crunchy, and seriously addictive!",
     "As fall arrives, every sip gets a little sweeter. 🍁 Indulge in rich brown sugar and chewy boba…",
   ],
   hashtags: ["denverfoodie", "denverdrinks", "denvercolorado", "colorado", "boba", "kdog", "koreancorndog", "lakewoodco"],
@@ -81,7 +81,7 @@ export const DEFAULT_PROFILE: Profile = {
     { name: "Milk Tea Boba", price: 5, category: "Boba", tags: ["classic"], sizes: [{ label: "Large", price: 6 }, { label: "Bulb Cup", price: 12.5 }], description: "Flavors: Chocolate, Coconut, Coffee, Green Tea, Honeydew, Mango, Milk Tea, Strawberry, Taro, Thai Tea. Contains milk." },
     { name: "Fruit Tea Boba", price: 6.5, category: "Boba", tags: ["fruity", "refreshing"], description: "One size. Flavors: Blueberry, Lychee, Mango, Passion Fruit, Peach, Pineapple, Raspberry, Strawberry." },
     { name: "Electric Slush Boba", price: 6.5, category: "Slush", tags: ["energy drink", "slush"], description: "Energy drink slush, one size. Flavors: Blueberry, Blood Orange, Green Apple, Mango, Passion Fruit, Peach, Pineapple, Pomegranate, Raspberry, Strawberry, Kiwi, Watermelon." },
-    { name: "Ghost Charge Green Apple Energy Slush", price: 6.5, category: "Slush", tags: ["Halloween special — check it's still available"], description: "Halloween name for the Green Apple Electric Slush Boba." },
+    { name: "Ghost Charge Green Apple Energy Slush", price: 6.5, category: "Slush", tags: ["Halloween special, check it's still available"], description: "Halloween name for the Green Apple Electric Slush Boba." },
     { name: "Mangonada Boba", price: 8.25, category: "Slush", tags: ["photogenic", "sweet and spicy"], description: "Mango slush with chamoy, tajin, mixed jelly and mangoes. One size." },
     { name: "Galaxyade Boba", price: 6.5, category: "Lemonade", tags: ["photogenic", "colorful"], description: "Galaxy-colored lemonade with mixed jelly. One size." },
     { name: "Sunshine Boba", price: 6.5, category: "Lemonade", tags: ["bright", "refreshing"], description: "Passion tea lemonade with strawberry jelly. One size." },
@@ -91,7 +91,8 @@ export const DEFAULT_PROFILE: Profile = {
   sample: false,
 };
 
-export const PLATFORM_RULES: Record<string, any> = {
+export type PlatformRules = { max_chars: number; ideal_chars: string; hashtags: [number, number]; format: string; tips: string };
+export const PLATFORM_RULES: Record<string, PlatformRules> = {
   Instagram: {
     max_chars: 2200,
     ideal_chars: "125–300 characters before hashtags",

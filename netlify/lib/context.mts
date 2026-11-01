@@ -9,7 +9,22 @@ const WMO: Record<number, string> = {
   82: "heavy showers", 85: "snow showers", 86: "heavy snow showers", 95: "thunderstorm", 96: "thunderstorm", 99: "thunderstorm",
 };
 
-export async function getWeather(profile: Profile) {
+export type WeatherDay = { date: string; weekday: string; high_f: number; low_f: number; precip_chance: number | null; conditions: string };
+export type Weather =
+  | { location: string; source: string; days: WeatherDay[] }
+  | { location: string; unavailable: true; note: string };
+
+type OpenMeteo = {
+  daily: {
+    time: string[];
+    temperature_2m_max: number[];
+    temperature_2m_min: number[];
+    precipitation_probability_max?: (number | null)[];
+    weather_code: number[];
+  };
+};
+
+export async function getWeather(profile: Profile): Promise<Weather> {
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${profile.latitude}&longitude=${profile.longitude}` +
     `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code` +
@@ -20,8 +35,8 @@ export async function getWeather(profile: Profile) {
     const r = await fetch(url, { signal: ctrl.signal });
     clearTimeout(t);
     if (!r.ok) throw new Error(`status ${r.status}`);
-    const d = await r.json();
-    const days = d.daily.time.map((date: string, i: number) => ({
+    const d = (await r.json()) as OpenMeteo;
+    const days: WeatherDay[] = d.daily.time.map((date, i) => ({
       date,
       weekday: new Date(date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" }),
       high_f: Math.round(d.daily.temperature_2m_max[i]),
@@ -30,7 +45,7 @@ export async function getWeather(profile: Profile) {
       conditions: WMO[d.daily.weather_code[i]] ?? "mixed",
     }));
     return { location: profile.city, source: "Open-Meteo live forecast", days };
-  } catch (e) {
+  } catch {
     return { location: profile.city, unavailable: true, note: "Weather service unreachable; plan without weather." };
   }
 }

@@ -27,6 +27,7 @@
       <button data-view="profile"><span>⚙</span> Business profile</button>
       <button data-view="how"><span>?</span> How it works</button>
     </nav>
+    <div class="status session" id="session"></div>
     <div class="status" id="status">
       <div class="status-row"><i class="dot"></i> Checking AI…</div>
     </div>
@@ -34,6 +35,7 @@
   </aside>
 
   <main>
+    <div class="viewer-banner" id="viewerBanner"></div>
     <!-- PLAN POSTS -->
     <section id="view-create" class="view active">
       <header class="page-head">
@@ -96,7 +98,7 @@
           <h1>Publishing automation</h1>
           <p class="lede">Runs on its own every 15 minutes, and immediately when you approve a post with “publish now”. No AI decisions here, only fixed steps.</p>
         </div>
-        <button class="btn primary" id="runAutomation">Run automation now</button>
+        <button class="btn primary" id="runAutomation" data-owner-only>Run automation now</button>
       </header>
       <div class="flow">
         <div class="flow-trigger"><b>Trigger</b><span>Every 15 min · or owner “publish now”</span></div>
@@ -135,9 +137,9 @@
         <div>
           <p class="eyebrow">What the agents know</p>
           <h1>Business profile</h1>
-          <p class="lede">The agents only use facts from here. Keep prices and promotions current — the reviewer and the automation check every post against them.</p>
+          <p class="lede">The agents only use facts from here. Keep prices and promotions current. The reviewer and the automation check every post against them.</p>
         </div>
-        <button class="btn primary" id="saveProfile">Save profile</button>
+        <button class="btn primary" id="saveProfile" data-owner-only>Save profile</button>
       </header>
       <div id="sampleNote" class="note hidden">⚠️ Some menu items don't have a price yet. The agents never mention a price that isn't on file.</div>
       <form id="profileForm" class="profile-grid"></form>
@@ -192,6 +194,16 @@
       </div>
     </section>
   </main>
+
+  <div id="loginModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+    <form id="loginForm" class="card modal-card">
+      <h3 id="loginTitle">Owner sign in</h3>
+      <p class="muted">Only the owner can run the agents, edit, approve or delete posts.</p>
+      <label>Password<input id="loginPassword" type="password" autocomplete="current-password" required></label>
+      <p id="loginError" class="issue-high"></p>
+      <div class="actions"><button class="btn primary" id="loginSubmit" type="submit">Sign in</button><button class="btn ghost" id="loginCancel" type="button">Cancel</button></div>
+    </form>
+  </div>
 
   <div id="toast" class="toast hidden"></div>
   <script src="/app.js"></script>

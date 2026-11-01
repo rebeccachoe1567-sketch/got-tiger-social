@@ -1,8 +1,10 @@
 // Deterministic safety checks. Used by the Brand Reviewer agent as tools,
 // and again by the publishing automation as a final gate (no AI involved).
-import { PLATFORM_RULES, type Profile } from "./defaults.mts";
+import { PLATFORM_RULES, type MenuItem, type Profile } from "./defaults.mts";
+import type { Issue, Post } from "./types.mts";
 
-export type Issue = { severity: "low" | "medium" | "high"; problem: string };
+export type { Issue };
+export type CaptionLike = { id: string; platform: string; caption: string };
 
 export function fullText(caption: string, hashtags: string[] = []) {
   const tags = hashtags.map((h) => (h.startsWith("#") ? h : `#${h}`)).join(" ");
@@ -10,7 +12,7 @@ export function fullText(caption: string, hashtags: string[] = []) {
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[’']/g, "'");
-const pricesOf = (m: any): number[] => [m.price, ...(m.sizes || []).map((x: any) => x.price)].filter((p) => p > 0);
+const pricesOf = (m: MenuItem): number[] => [m.price, ...(m.sizes ?? []).map((x) => x.price)].filter((p) => p > 0);
 const fmt = (p: number) => `$${p.toFixed(2)}`;
 
 export function verifyMenuClaims(text: string, profile: Profile) {
@@ -104,10 +106,10 @@ export function similarity(a: string, b: string) {
   return inter / (A.size + B.size - inter);
 }
 
-export function checkDuplicates(caption: string, recent: any[]) {
+export function checkDuplicates(caption: string, recent: CaptionLike[]) {
   const scored = recent
-    .filter((p) => p.draft?.caption)
-    .map((p) => ({ id: p.id, platform: p.platform, sim: similarity(caption, p.draft.caption), caption: p.draft.caption.slice(0, 80) }))
+    .filter((p) => p.caption)
+    .map((p) => ({ id: p.id, platform: p.platform, sim: similarity(caption, p.caption), caption: p.caption.slice(0, 80) }))
     .sort((a, b) => b.sim - a.sim);
   const top = scored[0];
   const issues: Issue[] =
@@ -120,7 +122,7 @@ export function checkDuplicates(caption: string, recent: any[]) {
 }
 
 /** Final automated gate used by the publishing automation. */
-export function finalGate(post: any, profile: Profile) {
+export function finalGate(post: Post, profile: Profile) {
   const caption = post.draft?.caption || "";
   const tags = post.draft?.hashtags || [];
   const text = fullText(caption, tags) + (post.draft?.headline ? `\n${post.draft.headline}` : "") + (post.draft?.tagline ? `\n${post.draft.tagline}` : "");

@@ -200,6 +200,20 @@ details ul { margin: 6px 0 0; padding-left: 18px; }
 a.btn { text-decoration: none; display: inline-block; }
 .feed-img { width: 100%; display: block; }
 
+/* Owner sign-in */
+body.viewer [data-owner-only] { display: none !important; }
+.viewer-banner { display: none; background: var(--amber-soft); border: 1px solid #f2dca4; border-radius: 12px; padding: 10px 14px; margin-bottom: 18px; font-size: 14px; }
+body.viewer .viewer-banner { display: block; }
+.status.session { margin-top: auto; gap: 8px; }
+.status.session + .status { margin-top: 0; }
+.btn.small { padding: 6px 10px; font-size: 13px; }
+button.link { background: none; border: 0; color: #f59a4e; padding: 0; text-align: left; font-size: 12.5px; text-decoration: underline; }
+.modal { position: fixed; inset: 0; background: rgba(26, 20, 16, 0.55); display: grid; place-items: center; z-index: 20; padding: 20px; }
+.modal-card { width: min(420px, 100%); display: flex; flex-direction: column; gap: 12px; }
+.modal-card h3 { margin: 0; }
+.modal-card p { margin: 0; }
+.modal-card label { display: flex; flex-direction: column; gap: 6px; font-weight: 600; font-size: 14px; }
+
 /* Automation */
 .flow { display: grid; grid-template-columns: 1.1fr repeat(4, 1fr); gap: 10px; margin-bottom: 20px; }
 .flow > div { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 4px; position: relative; }

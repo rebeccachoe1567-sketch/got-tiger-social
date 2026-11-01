@@ -1,18 +1,25 @@
-// Got Tiger Social Studio — front end.
+// Got Tiger Social Studio: front end.
+// The browser only starts agent runs and watches them; all agent work happens on the server.
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const LIMITS = { Instagram: 2200, TikTok: 2200, Facebook: 2000, Bluesky: 300 };
 let PROFILE = null;
 let STATUS = {};
+let SESSION = { owner: false, configured: true };
 
 async function api(path, body, method) {
   const res = await fetch(path, {
     method: method || (body ? "POST" : "GET"),
     headers: body ? { "content-type": "application/json" } : {},
     body: body ? JSON.stringify(body) : undefined,
+    credentials: "same-origin",
   });
   const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+  if (res.status === 401) {
+    setSession({ ...SESSION, owner: false });
+    openLogin();
+  }
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
 }
@@ -30,6 +37,61 @@ function fmtWhen(iso) {
   return new Date(iso).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: PROFILE?.timezone });
 }
 const fullText = (d) => `${d.caption}${d.hashtags?.length ? "\n\n" + d.hashtags.map((h) => "#" + h).join(" ") : ""}`;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ------------------------------------------------------------------ owner sign-in
+function setSession(s) {
+  SESSION = s;
+  document.body.classList.toggle("viewer", !s.owner);
+  $("#session").innerHTML = s.owner
+    ? `<div class="status-row"><i class="dot on"></i>Signed in as owner</div><button class="link" id="logoutBtn">Sign out</button>`
+    : `<div class="status-row"><i class="dot sim"></i>View only</div><button class="btn orange small" id="loginBtn">Owner sign in</button>`;
+  $("#logoutBtn")?.addEventListener("click", async () => {
+    await api("/api/session/logout", {});
+    setSession({ ...SESSION, owner: false });
+    toast("Signed out");
+  });
+  $("#loginBtn")?.addEventListener("click", openLogin);
+  $("#viewerBanner").innerHTML = s.configured
+    ? `<b>View only.</b> Sign in as the owner to run the agents, edit or approve posts.`
+    : `<b>Setup needed.</b> The owner password isn't set in Netlify yet, so nothing can be changed.`;
+}
+
+async function loadSession() {
+  try {
+    setSession(await api("/api/session"));
+  } catch {
+    setSession({ owner: false, configured: true });
+  }
+}
+
+function openLogin() {
+  if (!SESSION.configured) return toast("The owner password isn't set up in Netlify yet.", 6000);
+  $("#loginModal").classList.remove("hidden");
+  $("#loginPassword").value = "";
+  $("#loginError").textContent = "";
+  setTimeout(() => $("#loginPassword").focus(), 50);
+}
+$("#loginCancel").addEventListener("click", () => $("#loginModal").classList.add("hidden"));
+$("#loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = $("#loginSubmit");
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/session/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: $("#loginPassword").value }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Sign in failed");
+    $("#loginModal").classList.add("hidden");
+    setSession({ ...SESSION, owner: true });
+    toast("Signed in as owner");
+    const active = $("nav button.active")?.dataset.view;
+    if (active && active !== "create") show(active);
+  } catch (err) {
+    $("#loginError").textContent = err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 // ------------------------------------------------------------------ navigation
 function show(view) {
@@ -52,8 +114,8 @@ async function loadStatus() {
     STATUS = { ai: "offline" };
   }
   $("#status").innerHTML = `
-    <div class="status-row"><i class="dot ${STATUS.ai === "live" ? "on" : "sim"}"></i>${STATUS.ai === "live" ? `AI live · ${esc(STATUS.model)}` : "AI offline demo mode"}</div>
-    <div class="status-row"><i class="dot ${STATUS.bluesky ? "on" : "sim"}"></i>${STATUS.bluesky ? `Bluesky connected` : "Bluesky not connected (simulated)"}</div>
+    <div class="status-row"><i class="dot ${STATUS.ai === "live" ? "on" : "sim"}"></i>${STATUS.ai === "live" ? "AI agents live" : "AI offline demo mode"}</div>
+    <div class="status-row"><i class="dot ${STATUS.bluesky ? "on" : "sim"}"></i>${STATUS.bluesky ? "Bluesky connected" : "Bluesky not connected (simulated)"}</div>
     <div class="status-row"><i class="dot on"></i>Automation every 15 min</div>`;
 }
 
@@ -70,8 +132,8 @@ async function refreshCount() {
   }
 }
 
-// ------------------------------------------------------------------ agents pipeline
-function traceHTML(steps) {
+// ------------------------------------------------------------------ agents pipeline (runs on the server)
+function traceHTML(steps = []) {
   return steps
     .map((s) => {
       if (s.type === "thought") return `<li><span class="thought">“${esc(s.text)}”</span></li>`;
@@ -80,13 +142,100 @@ function traceHTML(steps) {
     })
     .join("");
 }
-function setState(el, cls, text) {
-  el.className = `state ${cls}`;
-  el.textContent = text;
+function stateChip(cls, text) {
+  return `<span class="state ${cls}">${esc(text)}</span>`;
+}
+
+function laneHTML(lane) {
+  const plan = lane.plan;
+  const writing = lane.state === "writing";
+  const reviewing = lane.state === "reviewing";
+  const last = lane.rounds[lane.rounds.length - 1];
+  const finalDecision = !writing && !reviewing && last?.review ? last.review.decision : null;
+  const wState = writing ? stateChip("running", lane.rounds.length ? `revising (${lane.rounds.length})` : "writing") : lane.rounds.length ? stateChip("done", "draft ready") : stateChip("", "waiting");
+  const rState = reviewing
+    ? stateChip("running", "reviewing")
+    : finalDecision
+      ? stateChip(finalDecision === "approve" ? "done" : "warn", finalDecision === "approve" ? "approved" : finalDecision === "reject" ? "rejected" : "needs owner")
+      : last?.review
+        ? stateChip("warn", "sent back")
+        : stateChip("", "waiting");
+  const wOut = lane.rounds
+    .map((r) => `<div class="round">Round ${r.round}</div><ol class="trace">${traceHTML(r.writerTrace)}</ol>${r.draft ? `<div class="draft-preview">${esc(fullText(r.draft))}</div>` : ""}`)
+    .join("");
+  const rOut = lane.rounds
+    .filter((r) => r.review)
+    .map((r) => {
+      const rv = r.review;
+      const issues = (rv.issues || []).filter((x) => x.severity !== "low");
+      return `<div class="round">Round ${r.round}</div><ol class="trace">${traceHTML(r.reviewerTrace)}</ol>
+        <div class="verdict ${esc(rv.decision)}"><b>${esc(rv.decision.toUpperCase())}</b> · score ${esc(rv.score)}/10
+        ${rv.guardrail_override ? `<div><b>🛡 ${esc(rv.guardrail_override)}</b></div>` : ""}
+        ${rv.decision === "revise" ? `<div>→ ${esc(rv.feedback_for_writer)}</div>` : issues.length ? `<div>${issues.map((x) => esc(x.problem)).join("<br>")}</div>` : ""}</div>`;
+    })
+    .join("");
+  let design = "";
+  if (lane.state === "designing") design = `${stateChip("running", "designing")} <span>🎨 Designer is creating the ${esc(plan.platform)} graphic…</span>`;
+  else if (lane.graphicUrl) design = `<img src="${esc(lane.graphicUrl)}" alt="Generated graphic"><div>${stateChip("done", "graphic ready")}<p class="muted">Review, regenerate or download it in Approvals.</p></div>`;
+  else if (lane.state === "error") design = `${stateChip("error", "error")} <span>${esc(lane.error || "Something went wrong.")}</span>`;
+  else if (lane.state === "done" && lane.error) design = `${stateChip("warn", "no graphic")} <span>${esc(lane.error)}</span>`;
+  return `
+    <div class="lane-head">
+      <b>Post ${lane.index + 1}</b><span class="chip ${esc(plan.platform)}">${esc(plan.platform)}</span>
+      <span class="chip">${esc(fmtWhen(plan.publish_at))}</span>
+      <span class="chip">${esc((plan.menu_items || []).join(", ") || plan.goal)}</span>
+      <span style="color:var(--ink-2);font-size:13.5px;flex-basis:100%">${esc(plan.angle)}: <i style="color:var(--muted)">${esc(plan.reasoning)}</i></span>
+    </div>
+    <div class="lane-body">
+      <div class="lane-col">
+        <div class="agent-head"><div class="agent-icon w">2</div><div><h3>Writer agent</h3></div>${wState}</div>
+        ${wOut}
+      </div>
+      <div class="lane-col">
+        <div class="agent-head"><div class="agent-icon r">3</div><div><h3>Brand Reviewer agent</h3></div>${rState}</div>
+        ${rOut}
+      </div>
+    </div>
+    ${design ? `<div class="lane-design">${design}</div>` : ""}`;
+}
+
+function renderRun(view) {
+  const { run, lanes } = view;
+  const st = $("#strategistState");
+  if (run.status === "planning") {
+    st.className = "state running";
+    st.textContent = "thinking";
+  } else if (run.status === "error") {
+    st.className = "state error";
+    st.textContent = "error";
+  } else {
+    st.className = "state done";
+    st.textContent = `planned ${run.laneCount}`;
+  }
+  $("#strategistTrace").innerHTML = traceHTML(run.strategistTrace);
+  const sum = $("#strategySummary");
+  sum.innerHTML = run.error ? `<b>Error:</b> ${esc(run.error)}` : run.summary ? `<b>Strategy:</b> ${esc(run.summary)}` : "";
+  sum.classList.toggle("hidden", !run.summary && !run.error);
+  const box = $("#postLanes");
+  for (const lane of lanes) {
+    let el = $(`[data-lane="${lane.index}"]`, box);
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "lane";
+      el.dataset.lane = lane.index;
+      box.appendChild(el);
+    }
+    const key = `${lane.updatedAt}|${lane.state}`;
+    if (el.dataset.key !== key) {
+      el.dataset.key = key;
+      el.innerHTML = laneHTML(lane);
+    }
+  }
 }
 
 $("#planForm").addEventListener("submit", async (e) => {
   e.preventDefault();
+  if (!SESSION.owner) return openLogin();
   const btn = $("#runBtn");
   btn.disabled = true;
   btn.textContent = "Agents working…";
@@ -95,100 +244,36 @@ $("#planForm").addEventListener("submit", async (e) => {
   $("#strategySummary").classList.add("hidden");
   $("#postLanes").innerHTML = "";
   $("#pipelineDone").classList.add("hidden");
-  const st = $("#strategistState");
-  setState(st, "running", "thinking");
+  $("#strategistState").className = "state running";
+  $("#strategistState").textContent = "starting";
   try {
-    const strat = await api("/api/agents/strategist", { goal: $("#goal").value.trim(), count: Number($("#count").value) });
-    $("#strategistTrace").innerHTML = traceHTML(strat.trace);
-    if (strat.mode === "offline") toast("⚠️ The AI wasn't reachable, so this run used backup mode (scripted captions). Wait a minute and run it again.", 9000);
-    setState(st, "done", `planned ${strat.posts.length}`);
-    $("#strategySummary").innerHTML = `<b>Strategy:</b> ${esc(strat.summary)}`;
-    $("#strategySummary").classList.remove("hidden");
-    const batchId = Date.now().toString(36);
-    const results = await Promise.allSettled(strat.posts.map((plan, i) => runPost(plan, i, batchId, strat.summary)));
-    const ok = results.filter((r) => r.status === "fulfilled").length;
+    const { runId } = await api("/api/runs", { goal: $("#goal").value.trim(), count: Number($("#count").value) });
+    const started = Date.now();
+    let view;
+    for (;;) {
+      await sleep(1500);
+      view = await api(`/api/runs/${runId}`);
+      renderRun(view);
+      if (view.run.status === "done" || view.run.status === "error") break;
+      if (Date.now() - started > 5 * 60000) throw new Error("This run is taking longer than expected. Check Approvals in a minute.");
+    }
+    if (view.run.status === "error") throw new Error(view.run.error || "The run failed.");
+    if (view.run.mode === "offline") toast("⚠️ The AI wasn't reachable, so this run used backup mode (scripted captions). Wait a minute and run it again.", 9000);
+    const ok = view.lanes.filter((l) => l.postId).length;
     const banner = $("#pipelineDone");
-    banner.innerHTML = `<div><b>${ok} post${ok === 1 ? "" : "s"} ready for your approval</b><div style="opacity:.75;font-size:14px">The agents never publish on their own — you approve each one.</div></div><button class="btn orange" onclick="show('approvals')">Review &amp; approve →</button>`;
+    banner.innerHTML = `<div><b>${ok} post${ok === 1 ? "" : "s"} ready for your approval</b><div style="opacity:.75;font-size:14px">The agents never publish on their own. You approve each one.</div></div><button class="btn orange" onclick="show('approvals')">Review &amp; approve →</button>`;
     banner.classList.remove("hidden");
     banner.scrollIntoView({ behavior: "smooth", block: "nearest" });
     refreshCount();
   } catch (err) {
-    setState(st, "error", "error");
-    toast(err.message, 6000);
+    $("#strategistState").className = "state error";
+    $("#strategistState").textContent = "error";
+    toast(err.message, 7000);
   } finally {
     btn.disabled = false;
     btn.textContent = "Run the agents 🐯";
   }
 });
-
-async function runPost(plan, i, batchId, strategySummary) {
-  const lane = document.createElement("div");
-  lane.className = "lane";
-  lane.innerHTML = `
-    <div class="lane-head">
-      <b>Post ${i + 1}</b><span class="chip ${esc(plan.platform)}">${esc(plan.platform)}</span>
-      <span class="chip">${esc(fmtWhen(plan.publish_at))}</span>
-      <span class="chip">${esc((plan.menu_items || []).join(", ") || plan.goal)}</span>
-      <span style="color:var(--ink-2);font-size:13.5px;flex-basis:100%">${esc(plan.angle)} — <i style="color:var(--muted)">${esc(plan.reasoning)}</i></span>
-    </div>
-    <div class="lane-body">
-      <div class="lane-col">
-        <div class="agent-head"><div class="agent-icon w">2</div><div><h3>Writer agent</h3></div><span class="state" data-w>waiting</span></div>
-        <div data-wout></div>
-      </div>
-      <div class="lane-col">
-        <div class="agent-head"><div class="agent-icon r">3</div><div><h3>Brand Reviewer agent</h3></div><span class="state" data-r>waiting</span></div>
-        <div data-rout></div>
-      </div>
-    </div>
-    <div class="lane-design hidden" data-design></div>`;
-  $("#postLanes").appendChild(lane);
-  const wState = $("[data-w]", lane), rState = $("[data-r]", lane);
-  const wOut = $("[data-wout]", lane), rOut = $("[data-rout]", lane);
-
-  let draft = null, review = null;
-  const rounds = [];
-  try {
-    for (let round = 1; round <= 3; round++) {
-      setState(wState, "running", round === 1 ? "writing" : `revising (${round - 1})`);
-      const w = await api("/api/agents/writer", { plan, previous: draft, feedback: review?.feedback_for_writer });
-      draft = w.draft;
-      wOut.insertAdjacentHTML("beforeend", `<div class="round">Round ${round}</div><ol class="trace">${traceHTML(w.trace)}</ol><div class="draft-preview">${esc(fullText(draft))}</div>`);
-      setState(wState, "done", "draft ready");
-
-      setState(rState, "running", "reviewing");
-      const r = await api("/api/agents/reviewer", { plan, draft });
-      review = r.review;
-      const issues = (review.issues || []).filter((x) => x.severity !== "low");
-      rOut.insertAdjacentHTML(
-        "beforeend",
-        `<div class="round">Round ${round}</div><ol class="trace">${traceHTML(r.trace)}</ol>
-         <div class="verdict ${esc(review.decision)}"><b>${esc(review.decision.toUpperCase())}</b> · score ${esc(review.score)}/10
-         ${review.guardrail_override ? `<div><b>🛡 ${esc(review.guardrail_override)}</b></div>` : ""}
-         ${review.decision === "revise" ? `<div>→ ${esc(review.feedback_for_writer)}</div>` : issues.length ? `<div>${issues.map((x) => esc(x.problem)).join("<br>")}</div>` : ""}</div>`,
-      );
-      rounds.push({ round, decision: review.decision, score: review.score, feedback: review.feedback_for_writer, changes: draft.changes_made, guardrail: review.guardrail_override || null });
-      if (review.decision !== "revise") break;
-    }
-    setState(rState, review.decision === "approve" ? "done" : "warn", review.decision === "approve" ? "approved" : review.decision === "reject" ? "rejected" : "needs owner");
-    const saved = await api("/api/posts", { plan, draft, review, rounds, batchId, strategySummary });
-    if (review.decision !== "reject") {
-      const d = $("[data-design]", lane);
-      d.classList.remove("hidden");
-      d.innerHTML = `<span class="state running">designing</span> <span>🎨 Designer is creating the ${esc(plan.platform)} graphic${draft.headline ? ` (“${esc(draft.headline)}”)` : ""}…</span>`;
-      try {
-        const g = await api(`/api/posts/${saved.id}/graphic`, {});
-        d.innerHTML = `<img src="${esc(g.post.image.url)}" alt="Generated graphic"><div><span class="state done">graphic ready</span><p>Headline: <b>${esc(draft.headline || "—")}</b></p><p class="muted">Review, regenerate or download it in Approvals.</p></div>`;
-      } catch (e) {
-        d.innerHTML = `<span class="state warn">no graphic</span> <span>${esc(e.message)} You can generate it from Approvals.</span>`;
-      }
-    }
-  } catch (err) {
-    setState(wState.classList.contains("running") ? wState : rState, "error", "error");
-    wOut.insertAdjacentHTML("beforeend", `<div class="verdict reject">${esc(err.message)}</div>`);
-    throw err;
-  }
-}
 
 // ------------------------------------------------------------------ approvals
 function scoreColor(s) {
@@ -215,7 +300,7 @@ async function loadApprovals() {
     ? others
         .map((p) => {
           const [t, c] = label[p.status] || [p.status, ""];
-          return `<div class="row"><span class="chip ${esc(p.platform)}">${esc(p.platform)}</span><span class="chip ${c}">${t}</span><span class="txt">${esc(p.draft?.caption)}</span><span class="when">${esc(fmtWhen(p.publishedAt || p.scheduledFor))}</span><button class="btn ghost danger" data-del="${esc(p.id)}">Delete</button></div>`;
+          return `<div class="row"><span class="chip ${esc(p.platform)}">${esc(p.platform)}</span><span class="chip ${c}">${t}</span><span class="txt">${esc(p.draft?.caption)}</span><span class="when">${esc(fmtWhen(p.publishedAt || p.scheduledFor))}</span><button class="btn ghost danger" data-owner-only data-del="${esc(p.id)}">Delete</button></div>`;
         })
         .join("")
     : `<div class="empty" style="padding:20px">No scheduled or past posts yet.</div>`;
@@ -233,7 +318,7 @@ function postCard(p) {
   const r = p.review || {};
   const issues = r.issues || [];
   const roundsTxt = (p.rounds || [])
-    .map((x) => `<li>Round ${x.round}: reviewer said <b>${esc(x.decision)}</b> (${esc(x.score)}/10)${x.feedback ? ` — “${esc(x.feedback)}”` : ""}${x.guardrail ? ` <b>🛡 ${esc(x.guardrail)}</b>` : ""}</li>`)
+    .map((x) => `<li>Round ${x.round}: reviewer said <b>${esc(x.decision)}</b> (${esc(x.score)}/10)${x.feedback ? `: “${esc(x.feedback)}”` : ""}${x.guardrail ? ` <b>🛡 ${esc(x.guardrail)}</b>` : ""}</li>`)
     .join("");
   el.innerHTML = `
     <div class="post-top">
@@ -244,7 +329,7 @@ function postCard(p) {
     </div>
     ${p.heldReason ? `<div class="meta" style="background:var(--red-soft)"><b>Held:</b> ${esc(p.heldReason)}</div>` : ""}
     <div class="graphic" data-graphic>${p.image?.url ? `<img src="${esc(p.image.url)}" alt="Post graphic">` : `<div class="graphic-empty">No graphic yet</div>`}</div>
-    <div class="graphic-actions">
+    <div class="graphic-actions" data-owner-only>
       <label>Headline on graphic<input data-headline value="${esc(p.draft?.headline || "")}" placeholder="e.g. VOLCANO HEAT"></label>
       <label>Tagline on graphic<input data-tagline value="${esc(p.draft?.tagline || "")}" placeholder="e.g. with buldak mayo"></label>
       <label>Changes for the designer <em>(optional)</em><input data-tweak placeholder="e.g. darker background, more fall leaves"></label>
@@ -260,13 +345,17 @@ function postCard(p) {
       <ul>${issues.map((i) => `<li class="issue-${esc(i.severity)}">[${esc(i.severity)}] ${esc(i.problem)}</li>`).join("") || "<li>No issues found.</li>"}</ul>
       <ul>${roundsTxt}</ul>
     </details>
-    <div class="actions">
+    <div class="actions" data-owner-only>
       <input type="datetime-local" data-when value="${esc(toLocalInput(p.scheduledFor))}" />
       <button class="btn primary" data-approve>Approve &amp; schedule</button>
       <button class="btn orange" data-now>Approve &amp; publish now</button>
       <button class="btn ghost danger" data-reject>Reject</button>
     </div>`;
   const cap = $("[data-caption]", el), tags = $("[data-tags]", el), count = $("[data-count]", el);
+  if (!SESSION.owner) {
+    cap.readOnly = true;
+    tags.readOnly = true;
+  }
   const parseTags = () => tags.value.split(/[\s,]+/).map((t) => t.replace(/^#/, "")).filter(Boolean);
   const upd = () => {
     const n = [...fullText({ caption: cap.value, hashtags: parseTags() })].length;
@@ -406,21 +495,21 @@ async function loadProfile() {
       <h3>Brand</h3>
       <label>Audience<textarea name="audience" rows="2">${esc(p.audience)}</textarea></label>
       <label>Brand voice<textarea name="voice" rows="4">${esc(p.voice)}</textarea></label>
-      <label>Example captions <small>(one per line — the Writer copies this style)</small><textarea name="example_posts" rows="4">${esc((p.example_posts || []).join("\n"))}</textarea></label>
+      <label>Example captions <small>(one per line; the Writer copies this style)</small><textarea name="example_posts" rows="4">${esc((p.example_posts || []).join("\n"))}</textarea></label>
       <label>Hashtag bank <small>(comma separated, no #)</small><input name="hashtags" value="${esc((p.hashtags || []).join(", "))}"></label>
-      <label>Banned phrases <small>(comma separated — posts using these are blocked)</small><input name="banned_phrases" value="${esc(p.banned_phrases.join(", "))}"></label>
-      <label>Active promotions <small>(one per line — any deal not listed here is blocked)</small><textarea name="promotions" rows="3">${esc(p.promotions.join("\n"))}</textarea></label>
+      <label>Banned phrases <small>(comma separated; posts using these are blocked)</small><input name="banned_phrases" value="${esc(p.banned_phrases.join(", "))}"></label>
+      <label>Active promotions <small>(one per line; any deal not listed here is blocked)</small><textarea name="promotions" rows="3">${esc(p.promotions.join("\n"))}</textarea></label>
       <label>Local events <small>(one per line: YYYY-MM-DD | event)</small><textarea name="events" rows="3" placeholder="2026-11-27 | Colorado Mills Black Friday sale">${esc((p.events || []).map((e) => `${e.date} | ${e.name}`).join("\n"))}</textarea></label>
     </div>
     <div class="card full">
       <h3>Menu &amp; prices</h3>
       <table class="menu-table"><thead><tr><th>Item</th><th>Price ($)</th><th>Other sizes <small>(e.g. Large 6, Bulb Cup 12.50)</small></th><th>Category</th><th>Tags</th><th>Description / flavors</th><th></th></tr></thead><tbody id="menuRows"></tbody></table>
-      <div><button type="button" class="btn" id="addItem">+ Add item</button> <button type="button" class="btn ghost danger" id="resetDemo">Clear all demo posts &amp; logs</button></div>
+      <div data-owner-only><button type="button" class="btn" id="addItem">+ Add item</button> <button type="button" class="btn ghost danger" id="resetDemo">Clear all demo posts &amp; logs</button></div>
     </div>`;
   const rows = $("#menuRows");
   const addRow = (m = { name: "", price: "", category: "K-Dog", tags: [] }) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td><input data-k="name" value="${esc(m.name)}"></td><td class="price"><input data-k="price" type="number" step="0.01" placeholder="not set" value="${m.price ? esc(m.price) : ""}"></td><td><input data-k="sizes" placeholder="—" value="${esc((m.sizes || []).map((x) => `${x.label} ${x.price}`).join(", "))}"></td><td><input data-k="category" value="${esc(m.category)}"></td><td><input data-k="tags" value="${esc((m.tags || []).join(", "))}"></td><td><input data-k="description" value="${esc(m.description || "")}"></td><td><button type="button" class="x" title="Remove">×</button></td>`;
+    tr.innerHTML = `<td><input data-k="name" value="${esc(m.name)}"></td><td class="price"><input data-k="price" type="number" step="0.01" placeholder="not set" value="${m.price ? esc(m.price) : ""}"></td><td><input data-k="sizes" placeholder="none" value="${esc((m.sizes || []).map((x) => `${x.label} ${x.price}`).join(", "))}"></td><td><input data-k="category" value="${esc(m.category)}"></td><td><input data-k="tags" value="${esc((m.tags || []).join(", "))}"></td><td><input data-k="description" value="${esc(m.description || "")}"></td><td><button type="button" class="x" title="Remove">×</button></td>`;
     $(".x", tr).onclick = () => tr.remove();
     rows.appendChild(tr);
   };
@@ -458,7 +547,7 @@ $("#saveProfile").addEventListener("click", async () => {
   try {
     PROFILE = await api("/api/profile", body, "PUT");
     $("#sampleNote").classList.toggle("hidden", !(PROFILE.menu || []).some((m) => !m.price));
-    toast("Profile saved — the agents will use it from now on");
+    toast("Profile saved. The agents will use it from now on");
   } catch (e) {
     toast(e.message, 6000);
   }
@@ -466,6 +555,7 @@ $("#saveProfile").addEventListener("click", async () => {
 
 // ------------------------------------------------------------------ boot
 (async () => {
+  await loadSession();
   loadStatus();
   try { PROFILE = await api("/api/profile"); } catch {}
   refreshCount();

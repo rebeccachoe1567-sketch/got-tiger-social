@@ -4,6 +4,9 @@
 import { finalGate, fullText } from "./checks.mts";
 import { addNotification, addRun, getProfile, listPosts, savePost, setMeta } from "./store.mts";
 import { prettyLocal } from "./time.mts";
+import type { AutomationRun, AutomationStep, Post } from "./types.mts";
+
+type Facet = { index: { byteStart: number; byteEnd: number }; features: { $type: string; tag: string }[] };
 
 async function publishToBluesky(text: string) {
   const handle = Netlify.env.get("BLUESKY_HANDLE");
@@ -15,10 +18,10 @@ async function publishToBluesky(text: string) {
     body: JSON.stringify({ identifier: handle, password }),
   });
   if (!s.ok) throw new Error(`Bluesky login failed (${s.status})`);
-  const session = await s.json();
+  const session = (await s.json()) as { accessJwt: string; did: string; handle?: string };
   // Make hashtags clickable with facets (byte offsets).
   const enc = new TextEncoder();
-  const facets: any[] = [];
+  const facets: Facet[] = [];
   for (const m of text.matchAll(/#[\p{L}\p{N}_]+/gu)) {
     const start = enc.encode(text.slice(0, m.index)).length;
     facets.push({
@@ -36,7 +39,7 @@ async function publishToBluesky(text: string) {
     }),
   });
   if (!r.ok) throw new Error(`Bluesky post failed (${r.status}): ${await r.text()}`);
-  const out = await r.json();
+  const out = (await r.json()) as { uri: string };
   const rkey = out.uri.split("/").pop();
   return `https://bsky.app/profile/${session.handle || handle}/post/${rkey}`;
 }
@@ -57,20 +60,20 @@ async function notifyWebhook(message: string) {
   }
 }
 
-export async function runPublishingAutomation(trigger: string) {
+export async function runPublishingAutomation(trigger: string): Promise<AutomationRun> {
   const startedAt = new Date();
   const profile = await getProfile();
-  const steps: any[] = [];
+  const steps: AutomationStep[] = [];
 
-  // STEP 1 — Collect: approved posts whose scheduled time has arrived.
+  // STEP 1: Collect: approved posts whose scheduled time has arrived.
   const posts = await listPosts();
   const due = posts.filter((p) => p.status === "approved" && new Date(p.scheduledFor).getTime() <= Date.now());
   const upcoming = posts.filter((p) => p.status === "approved" && new Date(p.scheduledFor).getTime() > Date.now());
   steps.push({ step: 1, name: "Collect due posts", detail: `${due.length} due now, ${upcoming.length} scheduled later` });
 
-  // STEP 2 — Safety gate: re-run deterministic checks (the owner may have edited the text).
-  const ready: any[] = [];
-  const held: any[] = [];
+  // STEP 2: Safety gate: re-run deterministic checks (the owner may have edited the text).
+  const ready: Post[] = [];
+  const held: Post[] = [];
   for (const p of due) {
     const gate = finalGate(p, profile);
     if (gate.passed) ready.push(p);
@@ -83,9 +86,9 @@ export async function runPublishingAutomation(trigger: string) {
   }
   steps.push({ step: 2, name: "Final safety check", detail: `${ready.length} passed, ${held.length} held for owner` });
 
-  // STEP 3 — Publish: Bluesky goes live if connected; other platforms go to the Got Tiger feed (simulated).
-  const published: any[] = [];
-  const failed: any[] = [];
+  // STEP 3: Publish: Bluesky goes live if connected; other platforms go to the Got Tiger feed (simulated).
+  const published: Post[] = [];
+  const failed: Post[] = [];
   for (const p of ready) {
     const text = fullText(p.draft.caption, p.draft.hashtags);
     try {
@@ -97,9 +100,9 @@ export async function runPublishingAutomation(trigger: string) {
       p.publishTarget = url ? "Bluesky (live)" : `${p.platform} (simulated feed)`;
       await savePost(p);
       published.push(p);
-    } catch (e: any) {
+    } catch (e) {
       p.status = "held";
-      p.heldReason = `Publishing error: ${e?.message || e}`;
+      p.heldReason = `Publishing error: ${e instanceof Error ? e.message : String(e)}`;
       await savePost(p);
       failed.push(p);
     }
@@ -108,10 +111,10 @@ export async function runPublishingAutomation(trigger: string) {
     step: 3,
     name: "Publish",
     detail: published.length ? published.map((p) => p.publishTarget).join("; ") : "Nothing to publish",
-    errors: failed.map((p) => p.heldReason),
+    errors: failed.map((p) => p.heldReason ?? "Unknown publishing error"),
   });
 
-  // STEP 4 — Log + notify the owner.
+  // STEP 4: Log + notify the owner.
   let notified = "no notification needed";
   if (published.length || held.length || failed.length) {
     const parts = [];
@@ -119,14 +122,14 @@ export async function runPublishingAutomation(trigger: string) {
     if (held.length + failed.length) parts.push(`⚠️ ${held.length + failed.length} post(s) held for your review`);
     const next = upcoming.sort((a, b) => a.scheduledFor.localeCompare(b.scheduledFor))[0];
     if (next) parts.push(`Next up: ${next.platform} on ${prettyLocal(new Date(next.scheduledFor), profile.timezone)}`);
-    const message = `🐯 ${profile.name} social update — ${parts.join(" · ")}`;
+    const message = `🐯 ${profile.name} social update: ${parts.join(" · ")}`;
     await addNotification({ message, kind: held.length + failed.length ? "warning" : "success", postIds: [...published, ...held, ...failed].map((p) => p.id) });
     const hook = await notifyWebhook(message);
     notified = hook ? "owner notified in app + team chat" : "owner notified in app";
   }
   steps.push({ step: 4, name: "Log & notify owner", detail: notified });
 
-  const run = { trigger, startedAt: startedAt.toISOString(), finishedAt: new Date().toISOString(), steps, published: published.length, held: held.length + failed.length };
+  const run: AutomationRun = { trigger, startedAt: startedAt.toISOString(), finishedAt: new Date().toISOString(), steps, published: published.length, held: held.length + failed.length };
   await setMeta("lastRun", run);
   // Keep the log readable: record runs that did something, or were started by a person/event.
   if (published.length || held.length || failed.length || trigger !== "schedule") await addRun(run);
