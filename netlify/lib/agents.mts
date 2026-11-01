@@ -250,7 +250,8 @@ export async function runWriter(input: { plan: any; previous?: any; feedback?: s
       required: ["caption", "hashtags", "headline", "visual_idea", "call_to_action"],
       properties: {
         caption: { type: "string", description: "Post text WITHOUT hashtags." },
-        headline: { type: "string", description: "2–5 word headline printed on the graphic, like the shop's posters (e.g. 'VOLCANO SEASON', 'SWEET SWIRLS'). No prices or deals." },
+        headline: { type: "string", description: "2–5 word headline printed big on the graphic, like the shop's posters (e.g. 'GHOST CHARGE', 'BROWN SUGAR BOBA', 'VOLCANO HEAT'). No prices or deals." },
+        tagline: { type: "string", description: "Short second line on the graphic, 2–6 words (e.g. 'Taste the season', 'Green Apple Energy Slush', 'with buldak mayo'). No prices or deals." },
         hashtags: { type: "array", items: { type: "string" }, description: "Hashtags without the # sign." },
         visual_idea: { type: "string", description: "The graphic or video concept in Got Tiger's style: a dramatic or seasonal scene with the drink or K-Dog as the large hero (and which flavor/color it is). One or two sentences. Don't describe logos; the real logo is added separately." },
         call_to_action: { type: "string" },
@@ -311,7 +312,7 @@ function cleanDraft(d: any) {
 // ---------------------------------------------------------------- BRAND REVIEWER
 export async function runReviewer(input: { plan: any; draft: any }, profile: Profile, posts: any[]) {
   const { plan, draft } = input;
-  const text = fullText(draft.caption, draft.hashtags) + (draft.headline ? `\n${draft.headline}` : "");
+  const text = fullText(draft.caption, draft.hashtags) + (draft.headline ? `\n${draft.headline}` : "") + (draft.tagline ? `\n${draft.tagline}` : "");
   const others = [
     ...posts.filter((p) => p.draft?.caption && p.draft.caption !== draft.caption),
     ...(profile.example_posts || []).map((c, i) => ({ id: `instagram-${i}`, platform: "Instagram (already posted)", draft: { caption: c } })),
@@ -374,7 +375,7 @@ Decide:
 Also judge things the tools can't: is it on-brand, does the hook work, does it mention items that aren't on the menu, is a promotion valid for the posting day (${plan.weekday})?
 Before each tool call, write one short sentence about what you're checking.`;
 
-  const userMessage = `Platform: ${plan.platform}\nScheduled: ${plan.weekday} ${plan.publish_at_local}\nPlan angle: ${plan.angle}\n\nDraft caption:\n${fullText(draft.caption, draft.hashtags)}\n\nHeadline on the graphic: ${draft.headline || "(none)"}\nVisual idea: ${draft.visual_idea}`;
+  const userMessage = `Platform: ${plan.platform}\nScheduled: ${plan.weekday} ${plan.publish_at_local}\nPlan angle: ${plan.angle}\n\nDraft caption:\n${fullText(draft.caption, draft.hashtags)}\n\nHeadline on the graphic: ${draft.headline || "(none)"}\nTagline on the graphic: ${draft.tagline || "(none)"}\nVisual idea: ${draft.visual_idea}`;
 
   let review: any, trace: TraceStep[], model: string, mode: string;
   if (llmMode() === "live") {

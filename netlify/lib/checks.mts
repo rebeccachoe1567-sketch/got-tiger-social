@@ -123,7 +123,7 @@ export function checkDuplicates(caption: string, recent: any[]) {
 export function finalGate(post: any, profile: Profile) {
   const caption = post.draft?.caption || "";
   const tags = post.draft?.hashtags || [];
-  const text = fullText(caption, tags) + (post.draft?.headline ? `\n${post.draft.headline}` : "");
+  const text = fullText(caption, tags) + (post.draft?.headline ? `\n${post.draft.headline}` : "") + (post.draft?.tagline ? `\n${post.draft.tagline}` : "");
   const issues = [...verifyMenuClaims(text, profile).issues, ...checkBrandRules(caption, tags, post.platform, profile).issues];
   if (post.platform !== "Bluesky" && !post.image?.url) issues.push({ severity: "high", problem: `${post.platform} posts need a graphic. Generate one before publishing.` });
   const blocking = issues.filter((i) => i.severity === "high");

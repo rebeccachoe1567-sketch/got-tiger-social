@@ -1,10 +1,13 @@
 // Designer step: turns a post's graphic concept into a finished, post-ready image.
 // Uses Google's image model through the Netlify AI Gateway (no API key of our own).
+// The model is given the shop's real logo and four of its real Instagram posts as references.
 import { GoogleGenAI } from "@google/genai";
 import { getStore } from "@netlify/blobs";
 import type { Profile } from "./defaults.mts";
 
 const ASPECT: Record<string, string> = { Instagram: "4:5", Facebook: "4:5", TikTok: "9:16", Bluesky: "1:1" };
+const LOGO = "/brand/logo-badge.png";
+const STYLE_REFS = ["/brand/style-ghost.jpg", "/brand/style-coconut.jpg", "/brand/style-volcano.jpg", "/brand/style-fall.jpg"];
 
 function imageModels() {
   return [Netlify.env.get("IMAGE_MODEL"), "gemini-2.5-flash-image", "gemini-2.5-flash-image-preview"].filter(
@@ -16,52 +19,88 @@ export function imageAvailable() {
   return !!(Netlify.env.get("GEMINI_API_KEY") || Netlify.env.get("GOOGLE_GEMINI_BASE_URL")) && Netlify.env.get("FORCE_OFFLINE") !== "1";
 }
 
-export function buildImagePrompt(post: any, profile: Profile, tweak?: string) {
-  const items = (post.plan?.menu_items || [])
-    .map((n: string) => profile.menu.find((m) => m.name === n))
-    .filter(Boolean)
-    .map((m: any) => `${m.name} (${m.category}): ${m.description || m.tags.join(", ")}`);
-  const headline = (post.draft?.headline || "").trim();
-  return `Design a finished, scroll-stopping ${post.platform} food advertisement poster for "${profile.name}", a Korean corn dog (K-Dog) and boba shop in the Denver area.
-
-STYLE (match the shop's existing feed): bold, cinematic, hyper-real food-ad poster. Dramatic lighting, rich saturated color, a themed or seasonal backdrop, glossy condensation and texture, energetic composition. Looks like a professional social ad, not a stock photo.
-
-HERO PRODUCT (draw it accurately, it is the main subject, large and in focus):
-${items.length ? items.join("\n") : "A signature menu item from the shop."}
-Korean corn dogs are a batter-coated sausage or mozzarella on a wooden stick, deep-fried, with the coating described above. Boba drinks are in a clear plastic cup with a sealed lid and a wide straw, with visible tapioca pearls.
-
-CONCEPT: ${post.draft?.visual_idea || post.plan?.angle || ""}
-${tweak ? `OWNER'S REQUESTED CHANGES: ${tweak}\n` : ""}
-TEXT ON THE IMAGE (spell exactly, nothing else):
-${headline ? `- Big stylized headline: "${headline}"\n` : ""}- Small brand line near the top: "GOT TIGER" with "K-DOG • BOBA" underneath
-
-RULES:
-- No prices, dates, phone numbers, URLs, discount claims or any other words.
-- Do not draw any logo, mascot, badge or emblem on the cup or anywhere else (the owner adds the real logo).
-- No people or faces. No other brand names.
-- Keep important content away from the outer 6% so nothing gets cropped.`;
+async function loadRef(origin: string, path: string) {
+  try {
+    const r = await fetch(origin + path);
+    if (!r.ok) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    return { inlineData: { mimeType: path.endsWith(".png") ? "image/png" : "image/jpeg", data: buf.toString("base64") } };
+  } catch {
+    return null;
+  }
 }
 
-export async function generateGraphic(post: any, profile: Profile, tweak?: string) {
+export function buildImagePrompt(post: any, profile: Profile, opts: { tweak?: string; hasLogo: boolean; styleCount: number }) {
+  const items = (post.plan?.menu_items || [])
+    .map((n: string) => profile.menu.find((m) => m.name === n))
+    .filter(Boolean);
+  const itemLines = items.map((m: any) => `${m.name} (${m.category}): ${m.description || m.tags.join(", ")}`);
+  const isDrink = items.length ? items.some((m: any) => m.category !== "K-Dog") : false;
+  const headline = (post.draft?.headline || "").trim();
+  const tagline = (post.draft?.tagline || "").trim();
+  const refNote = [
+    opts.hasLogo ? `- REFERENCE IMAGE 1 is the shop's real logo (round orange badge with the tiger mascot).` : "",
+    opts.styleCount ? `- The next ${opts.styleCount} REFERENCE IMAGES are real posts from the shop's Instagram. They define the style you must match.` : "",
+  ].filter(Boolean).join("\n");
+
+  return `You are the graphic designer for "${profile.name}", a family-owned Korean corn dog (K-Dog) and boba shop in the Denver area. Create ONE finished ${post.platform} post graphic.
+
+${refNote}
+
+MATCH THE SHOP'S POSTER STYLE (from the reference posts):
+- Hyper-real, cinematic food-advertising poster with dramatic lighting and rich, saturated color.
+- A bold themed backdrop that fits the concept: e.g. neon city at night, swirling sauce or syrup macro, glowing lava, autumn scene with Korean hanok architecture. Pick what fits THIS post.
+- Layered, designed typography like the references: one big stylized HEADLINE whose lettering matches the theme (drippy slime, brush/graffiti, elegant serif, calligraphy brush), plus a smaller tagline line. Optionally 1–2 tiny side callouts of 2–4 flavor words.
+- A small "Got Tiger" wordmark with "K-DOG • BOBA" underneath, near the top or bottom.
+- Use the references only for style, layout and typography. Do NOT copy their scenes, characters, monsters or wording.
+
+THE HERO PRODUCT (large, sharp, appetizing, drawn accurately):
+${itemLines.length ? itemLines.join("\n") : "A signature menu item from the shop."}
+K-Dogs are a batter-coated sausage or mozzarella on a wooden stick, deep-fried, with the coating described above. Boba drinks are in a clear plastic cup with a sealed lid and a wide straw, with visible pearls or jelly.
+
+${opts.hasLogo ? `LOGO: Reproduce the logo from REFERENCE IMAGE 1 faithfully: same round orange badge, tiger mascot and lettering. Do not redesign, recolor or misspell it. ${isDrink ? "Place it as a round sticker label on the front of the cup, like the reference posts." : "Place it as a small round badge in a corner (or as a sticker on a boba cup if one appears)."}` : "Do not draw any logo or mascot."}
+
+CONCEPT: ${post.draft?.visual_idea || post.plan?.angle || ""}
+${opts.tweak ? `OWNER'S REQUESTED CHANGES (follow these): ${opts.tweak}\n` : ""}
+TEXT ON THE IMAGE (spell exactly):
+${headline ? `- Headline: "${headline}"\n` : ""}${tagline ? `- Tagline: "${tagline}"\n` : ""}- Wordmark: "Got Tiger" / "K-DOG • BOBA"
+
+RULES: No prices, dates, URLs, phone numbers, discounts or health claims. No people or faces. No other brand names. Keep all text and the logo away from the outer 6% so nothing gets cropped.`;
+}
+
+export async function generateGraphic(post: any, profile: Profile, origin: string, tweak?: string) {
   const ai = new GoogleGenAI({});
-  const prompt = buildImagePrompt(post, profile, tweak);
+  const [logo, ...styles] = await Promise.all([loadRef(origin, LOGO), ...STYLE_REFS.map((p) => loadRef(origin, p))]);
+  const styleRefs = styles.filter(Boolean) as any[];
+  const prompt = buildImagePrompt(post, profile, { tweak, hasLogo: !!logo, styleCount: styleRefs.length });
+  const parts: any[] = [{ text: prompt }];
+  if (logo) parts.push(logo);
+  parts.push(...styleRefs);
+
   let lastErr: any;
   for (const model of imageModels()) {
     try {
       const res: any = await ai.models.generateContent({
         model,
-        contents: prompt,
+        contents: [{ role: "user", parts }],
         config: { responseModalities: ["IMAGE", "TEXT"], imageConfig: { aspectRatio: ASPECT[post.platform] || "4:5" } } as any,
       });
-      const parts = res.candidates?.[0]?.content?.parts || [];
-      const img = parts.find((p: any) => p.inlineData?.mimeType?.startsWith("image/"));
+      const out = res.candidates?.[0]?.content?.parts || [];
+      const img = out.find((p: any) => p.inlineData?.mimeType?.startsWith("image/"));
       if (!img?.inlineData?.data) throw new Error("The image model returned no image");
       const bytes = Buffer.from(img.inlineData.data, "base64");
       const version = Date.now().toString(36);
       await getStore({ name: "got-tiger-images", consistency: "strong" }).set(`${post.id}`, new Blob([bytes]), {
         metadata: { contentType: img.inlineData.mimeType, version },
       });
-      return { url: `/api/images/${post.id}?v=${version}`, model, prompt, aspect: ASPECT[post.platform] || "4:5", generatedAt: new Date().toISOString(), tweak: tweak || null };
+      return {
+        url: `/api/images/${post.id}?v=${version}`,
+        model,
+        aspect: ASPECT[post.platform] || "4:5",
+        references: { logo: !!logo, styles: styleRefs.length },
+        generatedAt: new Date().toISOString(),
+        tweak: tweak || null,
+      };
     } catch (e: any) {
       lastErr = e;
       const msg = String(e?.message || e);

@@ -45,7 +45,8 @@ export default async (req: Request, context: Context) => {
     if (!imageAvailable()) return Response.json({ error: "Image generation isn't available here (it runs on the live Netlify site)." }, { status: 503 });
     try {
       if (body.headline !== undefined) post.draft.headline = String(body.headline);
-      post.image = await generateGraphic(post, profile, body.tweak);
+      if (body.tagline !== undefined) post.draft.tagline = String(body.tagline);
+      post.image = await generateGraphic(post, profile, new URL(req.url).origin, body.tweak);
       return Response.json({ post: await savePost(post) });
     } catch (e: any) {
       console.error("graphic", e);

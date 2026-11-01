@@ -245,7 +245,8 @@ function postCard(p) {
     ${p.heldReason ? `<div class="meta" style="background:var(--red-soft)"><b>Held:</b> ${esc(p.heldReason)}</div>` : ""}
     <div class="graphic" data-graphic>${p.image?.url ? `<img src="${esc(p.image.url)}" alt="Post graphic">` : `<div class="graphic-empty">No graphic yet</div>`}</div>
     <div class="graphic-actions">
-      <label>Headline on graphic<input data-headline value="${esc(p.draft?.headline || "")}" placeholder="e.g. VOLCANO SEASON"></label>
+      <label>Headline on graphic<input data-headline value="${esc(p.draft?.headline || "")}" placeholder="e.g. VOLCANO HEAT"></label>
+      <label>Tagline on graphic<input data-tagline value="${esc(p.draft?.tagline || "")}" placeholder="e.g. with buldak mayo"></label>
       <label>Changes for the designer <em>(optional)</em><input data-tweak placeholder="e.g. darker background, more fall leaves"></label>
       <div class="actions"><button class="btn" data-regen>${p.image?.url ? "↻ Regenerate graphic" : "🎨 Generate graphic"}</button><a class="btn ${p.image?.url ? "" : "hidden"}" data-dl href="${p.image?.url ? esc(p.image.url) + "&download=1" : "#"}">⬇ Download</a><button class="btn" data-copy>Copy caption</button></div>
     </div>
@@ -296,7 +297,7 @@ function postCard(p) {
     b.textContent = "Designing… (~20s)";
     $("[data-graphic]", el).classList.add("loading");
     try {
-      const out = await api(`/api/posts/${p.id}/graphic`, { headline: $("[data-headline]", el).value, tweak: $("[data-tweak]", el).value });
+      const out = await api(`/api/posts/${p.id}/graphic`, { headline: $("[data-headline]", el).value, tagline: $("[data-tagline]", el).value, tweak: $("[data-tweak]", el).value });
       p.image = out.post.image;
       $("[data-graphic]", el).innerHTML = `<img src="${esc(p.image.url)}" alt="Post graphic">`;
       const dl = $("[data-dl]", el);
