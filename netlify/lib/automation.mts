@@ -1,0 +1,134 @@
+// The Publishing Automation. Separate from the agents: no AI decisions here.
+// Trigger: every 15 minutes (schedule), or when the owner approves a post with "publish now" (event).
+// Steps: 1) collect due posts  2) final safety gate  3) publish  4) log + notify owner.
+import { finalGate, fullText } from "./checks.mts";
+import { addNotification, addRun, getProfile, listPosts, savePost, setMeta } from "./store.mts";
+import { prettyLocal } from "./time.mts";
+
+async function publishToBluesky(text: string) {
+  const handle = Netlify.env.get("BLUESKY_HANDLE");
+  const password = Netlify.env.get("BLUESKY_APP_PASSWORD");
+  if (!handle || !password) return null;
+  const s = await fetch("https://bsky.social/xrpc/com.atproto.server.createSession", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ identifier: handle, password }),
+  });
+  if (!s.ok) throw new Error(`Bluesky login failed (${s.status})`);
+  const session = await s.json();
+  // Make hashtags clickable with facets (byte offsets).
+  const enc = new TextEncoder();
+  const facets: any[] = [];
+  for (const m of text.matchAll(/#[\p{L}\p{N}_]+/gu)) {
+    const start = enc.encode(text.slice(0, m.index)).length;
+    facets.push({
+      index: { byteStart: start, byteEnd: start + enc.encode(m[0]).length },
+      features: [{ $type: "app.bsky.richtext.facet#tag", tag: m[0].slice(1) }],
+    });
+  }
+  const r = await fetch("https://bsky.social/xrpc/com.atproto.repo.createRecord", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${session.accessJwt}` },
+    body: JSON.stringify({
+      repo: session.did,
+      collection: "app.bsky.feed.post",
+      record: { $type: "app.bsky.feed.post", text, facets, createdAt: new Date().toISOString() },
+    }),
+  });
+  if (!r.ok) throw new Error(`Bluesky post failed (${r.status}): ${await r.text()}`);
+  const out = await r.json();
+  const rkey = out.uri.split("/").pop();
+  return `https://bsky.app/profile/${session.handle || handle}/post/${rkey}`;
+}
+
+async function notifyWebhook(message: string) {
+  const url = Netlify.env.get("NOTIFY_WEBHOOK_URL");
+  if (!url) return false;
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      // Works for Discord ("content") and Slack ("text") incoming webhooks.
+      body: JSON.stringify({ content: message, text: message }),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function runPublishingAutomation(trigger: string) {
+  const startedAt = new Date();
+  const profile = await getProfile();
+  const steps: any[] = [];
+
+  // STEP 1 — Collect: approved posts whose scheduled time has arrived.
+  const posts = await listPosts();
+  const due = posts.filter((p) => p.status === "approved" && new Date(p.scheduledFor).getTime() <= Date.now());
+  const upcoming = posts.filter((p) => p.status === "approved" && new Date(p.scheduledFor).getTime() > Date.now());
+  steps.push({ step: 1, name: "Collect due posts", detail: `${due.length} due now, ${upcoming.length} scheduled later` });
+
+  // STEP 2 — Safety gate: re-run deterministic checks (the owner may have edited the text).
+  const ready: any[] = [];
+  const held: any[] = [];
+  for (const p of due) {
+    const gate = finalGate(p, profile);
+    if (gate.passed) ready.push(p);
+    else {
+      p.status = "held";
+      p.heldReason = gate.blocking.map((b) => b.problem).join(" ");
+      await savePost(p);
+      held.push(p);
+    }
+  }
+  steps.push({ step: 2, name: "Final safety check", detail: `${ready.length} passed, ${held.length} held for owner` });
+
+  // STEP 3 — Publish: Bluesky goes live if connected; other platforms go to the Got Tiger feed (simulated).
+  const published: any[] = [];
+  const failed: any[] = [];
+  for (const p of ready) {
+    const text = fullText(p.draft.caption, p.draft.hashtags);
+    try {
+      let url: string | null = null;
+      if (p.platform === "Bluesky") url = await publishToBluesky(text);
+      p.status = "published";
+      p.publishedAt = new Date().toISOString();
+      p.externalUrl = url;
+      p.publishTarget = url ? "Bluesky (live)" : `${p.platform} (simulated feed)`;
+      await savePost(p);
+      published.push(p);
+    } catch (e: any) {
+      p.status = "held";
+      p.heldReason = `Publishing error: ${e?.message || e}`;
+      await savePost(p);
+      failed.push(p);
+    }
+  }
+  steps.push({
+    step: 3,
+    name: "Publish",
+    detail: published.length ? published.map((p) => p.publishTarget).join("; ") : "Nothing to publish",
+    errors: failed.map((p) => p.heldReason),
+  });
+
+  // STEP 4 — Log + notify the owner.
+  let notified = "no notification needed";
+  if (published.length || held.length || failed.length) {
+    const parts = [];
+    if (published.length) parts.push(`✅ ${published.length} post(s) went live: ${published.map((p) => p.platform).join(", ")}`);
+    if (held.length + failed.length) parts.push(`⚠️ ${held.length + failed.length} post(s) held for your review`);
+    const next = upcoming.sort((a, b) => a.scheduledFor.localeCompare(b.scheduledFor))[0];
+    if (next) parts.push(`Next up: ${next.platform} on ${prettyLocal(new Date(next.scheduledFor), profile.timezone)}`);
+    const message = `🐯 ${profile.name} social update — ${parts.join(" · ")}`;
+    await addNotification({ message, kind: held.length + failed.length ? "warning" : "success", postIds: [...published, ...held, ...failed].map((p) => p.id) });
+    const hook = await notifyWebhook(message);
+    notified = hook ? "owner notified in app + team chat" : "owner notified in app";
+  }
+  steps.push({ step: 4, name: "Log & notify owner", detail: notified });
+
+  const run = { trigger, startedAt: startedAt.toISOString(), finishedAt: new Date().toISOString(), steps, published: published.length, held: held.length + failed.length };
+  await setMeta("lastRun", run);
+  // Keep the log readable: record runs that did something, or were started by a person/event.
+  if (published.length || held.length || failed.length || trigger !== "schedule") await addRun(run);
+  return run;
+}

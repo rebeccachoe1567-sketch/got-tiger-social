@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Got Tiger · Social Studio</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐯</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">🐯</div>
+      <div>
+        <div class="brand-name">Got Tiger</div>
+        <div class="brand-sub">Social Studio</div>
+      </div>
+    </div>
+    <nav>
+      <button data-view="create" class="active"><span>✦</span> Plan posts</button>
+      <button data-view="approvals"><span>✓</span> Approvals <b id="approvalCount" class="pill hidden">0</b></button>
+      <button data-view="automation"><span>⟳</span> Automation</button>
+      <button data-view="feed"><span>▦</span> Published feed</button>
+      <button data-view="profile"><span>⚙</span> Business profile</button>
+      <button data-view="how"><span>?</span> How it works</button>
+    </nav>
+    <div class="status" id="status">
+      <div class="status-row"><i class="dot"></i> Checking AI…</div>
+    </div>
+    <div class="stripes" aria-hidden="true"></div>
+  </aside>
+
+  <main>
+    <!-- PLAN POSTS -->
+    <section id="view-create" class="view active">
+      <header class="page-head">
+        <div>
+          <p class="eyebrow">Step 1 · AI agents</p>
+          <h1>Plan this week's posts</h1>
+          <p class="lede">Three AI agents plan, write and fact-check posts for Got Tiger. Nothing goes out until you approve it.</p>
+        </div>
+      </header>
+
+      <form id="planForm" class="card plan-form">
+        <label class="grow">
+          <span>What do you want this week? <em>(optional)</em></span>
+          <input id="goal" placeholder="e.g. Bring in students on slow Tuesday afternoons, push the Potato Dog" />
+        </label>
+        <label>
+          <span>Posts</span>
+          <select id="count"><option>2</option><option selected>3</option><option>4</option><option>5</option></select>
+        </label>
+        <button class="btn primary big" id="runBtn" type="submit">Run the agents 🐯</button>
+      </form>
+
+      <div id="pipeline" class="pipeline hidden">
+        <div class="agent-card" id="strategistCard">
+          <div class="agent-head">
+            <div class="agent-icon s">1</div>
+            <div>
+              <h3>Strategist agent</h3>
+              <p>Decides what to post, where and when, using weather, calendar, menu and past posts.</p>
+            </div>
+            <span class="state" id="strategistState">waiting</span>
+          </div>
+          <ol class="trace" id="strategistTrace"></ol>
+          <div id="strategySummary" class="summary hidden"></div>
+        </div>
+        <div id="postLanes" class="lanes"></div>
+        <div id="pipelineDone" class="done-banner hidden"></div>
+      </div>
+    </section>
+
+    <!-- APPROVALS -->
+    <section id="view-approvals" class="view">
+      <header class="page-head">
+        <div>
+          <p class="eyebrow">Step 2 · Human in the loop</p>
+          <h1>Waiting for your approval</h1>
+          <p class="lede">Edit anything, pick a time, then approve. Approved posts are handed to the publishing automation.</p>
+        </div>
+      </header>
+      <div id="approvalList" class="post-grid"></div>
+      <h2 class="section-title">Scheduled &amp; other posts</h2>
+      <div id="otherList" class="compact-list"></div>
+    </section>
+
+    <!-- AUTOMATION -->
+    <section id="view-automation" class="view">
+      <header class="page-head">
+        <div>
+          <p class="eyebrow">Step 3 · Automation</p>
+          <h1>Publishing automation</h1>
+          <p class="lede">Runs on its own every 15 minutes, and immediately when you approve a post with “publish now”. No AI decisions here, only fixed steps.</p>
+        </div>
+        <button class="btn primary" id="runAutomation">Run automation now</button>
+      </header>
+      <div class="flow">
+        <div class="flow-trigger"><b>Trigger</b><span>Every 15 min · or owner “publish now”</span></div>
+        <div class="flow-step"><i>1</i><b>Collect due posts</b><span>Approved + scheduled time has arrived</span></div>
+        <div class="flow-step"><i>2</i><b>Final safety check</b><span>Re-checks prices, promos, banned words, length</span></div>
+        <div class="flow-step"><i>3</i><b>Publish</b><span>Bluesky live · other platforms to the Got Tiger feed</span></div>
+        <div class="flow-step"><i>4</i><b>Log &amp; notify owner</b><span>Inbox alert + optional team chat</span></div>
+      </div>
+      <div class="two-col">
+        <div class="card">
+          <h3>Run log</h3>
+          <div id="runLog" class="runlog"></div>
+        </div>
+        <div class="card">
+          <h3>Owner inbox</h3>
+          <div id="inbox" class="inbox"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FEED -->
+    <section id="view-feed" class="view">
+      <header class="page-head">
+        <div>
+          <p class="eyebrow">Live result</p>
+          <h1>Published feed</h1>
+          <p class="lede">Everything the automation has published. Bluesky posts link to the real post; Instagram, TikTok and Facebook are shown here as a simulated feed.</p>
+        </div>
+      </header>
+      <div id="feed" class="feed"></div>
+    </section>
+
+    <!-- PROFILE -->
+    <section id="view-profile" class="view">
+      <header class="page-head">
+        <div>
+          <p class="eyebrow">What the agents know</p>
+          <h1>Business profile</h1>
+          <p class="lede">The agents only use facts from here. Keep prices and promotions current — the reviewer and the automation check every post against them.</p>
+        </div>
+        <button class="btn primary" id="saveProfile">Save profile</button>
+      </header>
+      <div id="sampleNote" class="note hidden">⚠️ These menu items and prices are <b>sample data</b>. Replace them with Got Tiger's real menu.</div>
+      <form id="profileForm" class="profile-grid"></form>
+    </section>
+
+    <!-- HOW IT WORKS -->
+    <section id="view-how" class="view">
+      <header class="page-head">
+        <div>
+          <p class="eyebrow">For the presentation</p>
+          <h1>How it works</h1>
+          <p class="lede">The owner of a family-run Korean corn dog &amp; boba shop has no time to post consistently. Got Tiger Social Studio plans, writes, checks and publishes posts, with the owner approving every one.</p>
+        </div>
+      </header>
+      <div class="arch">
+        <div class="arch-col">
+          <h4>AI agents (make decisions)</h4>
+          <div class="arch-box s"><b>1 · Strategist</b><span>Looks up weather, holidays, menu, slow hours and past posts → decides item, platform and time</span></div>
+          <div class="arch-arrow">↓</div>
+          <div class="arch-box w"><b>2 · Writer</b><span>Loads brand voice + platform rules → drafts → self-checks → submits</span></div>
+          <div class="arch-arrow">⇅ up to 2 revision rounds</div>
+          <div class="arch-box r"><b>3 · Brand Reviewer</b><span>Verifies prices, promos, tone, length, repetition → approve / revise / reject</span></div>
+        </div>
+        <div class="arch-col">
+          <h4>Human checkpoint</h4>
+          <div class="arch-box h"><b>Owner approval</b><span>Edit, reschedule, approve or reject. Nothing publishes without this.</span></div>
+          <h4 style="margin-top:28px">Automation (fixed steps)</h4>
+          <div class="arch-box a"><b>Publishing automation</b><span>Trigger: every 15 min or “publish now” → collect due → safety gate → publish → log &amp; notify</span></div>
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="card">
+          <h3>Where it can fail</h3>
+          <ul class="bullets">
+            <li><b>Wrong facts:</b> AI could invent a price or a deal. → Code checks every price/promo against the menu twice (reviewer + automation), and can overrule the AI.</li>
+            <li><b>Stale profile:</b> if the menu or promos change and the profile isn't updated, checks pass on old data.</li>
+            <li><b>Tone misses:</b> a joke that lands badly or a cultural misstep. → Owner reviews every post.</li>
+            <li><b>Photo mismatch:</b> the post describes a photo the owner must still take.</li>
+            <li><b>Platform/API outages:</b> a failed publish is held and the owner is notified, not silently dropped.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>How much to trust it</h3>
+          <div class="trust">
+            <div class="trust-row"><span>Planning ideas &amp; timing</span><div class="meter"><i style="width:80%"></i></div><b>High</b></div>
+            <div class="trust-row"><span>Writing drafts</span><div class="meter"><i style="width:65%"></i></div><b>Medium</b></div>
+            <div class="trust-row"><span>Prices &amp; promotions</span><div class="meter"><i style="width:90%"></i></div><b>High*</b></div>
+            <div class="trust-row"><span>Posting with no human review</span><div class="meter"><i style="width:25%"></i></div><b>Low</b></div>
+          </div>
+          <p class="fine">*Only as accurate as the business profile. Recommendation: the AI does ~90% of the work, and the owner spends ~2 minutes approving each week's posts.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
