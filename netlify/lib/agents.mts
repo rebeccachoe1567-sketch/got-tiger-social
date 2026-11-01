@@ -252,6 +252,7 @@ export async function runWriter(input: { plan: any; previous?: any; feedback?: s
 
   const system = `You are the Copywriter agent for ${profile.name} (${profile.tagline}), a family-owned K-Dog and boba shop at ${profile.locations || profile.city}.
 You turn a strategist's plan into a ready-to-post caption for one platform, in the SAME style as the shop's real example posts (get_brand_voice): a short punchy hook, one sensory line, a few matching emojis.
+The example posts are already published: match their style, but write a NEW hook and NEW wording. Never reuse their sentences or hooks.
 Pick hashtags mostly from the hashtag bank. Call corn dogs "K-Dogs".
 The shop is "${profile.name}". Its former name (${profile.former_name || "none"}) may still show on cups or signs; don't treat it as an error.
 Process: load the brand voice and platform rules, get exact menu details, write a draft, run check_draft, fix any issues, then submit.
@@ -300,7 +301,10 @@ function cleanDraft(d: any) {
 export async function runReviewer(input: { plan: any; draft: any }, profile: Profile, posts: any[]) {
   const { plan, draft } = input;
   const text = fullText(draft.caption, draft.hashtags);
-  const others = posts.filter((p) => p.draft?.caption && p.draft.caption !== draft.caption);
+  const others = [
+    ...posts.filter((p) => p.draft?.caption && p.draft.caption !== draft.caption),
+    ...(profile.example_posts || []).map((c, i) => ({ id: `instagram-${i}`, platform: "Instagram (already posted)", draft: { caption: c } })),
+  ];
 
   const tools: AgentTool[] = [
     {
@@ -319,7 +323,7 @@ export async function runReviewer(input: { plan: any; draft: any }, profile: Pro
     },
     {
       name: "check_against_recent_posts",
-      description: "Finds the most similar existing post to catch repetitive content.",
+      description: "Finds the most similar existing post (including captions already on the shop's Instagram) to catch repeated or copied content.",
       input_schema: { type: "object", properties: {} },
       run: () => checkDuplicates(draft.caption, others),
       summarize: (o) => (o.issues.length ? `⚠ ${o.issues[0].problem.slice(0, 90)}` : `✓ Original (closest match ${o.most_similar?.similarity ?? "0%"})`),
@@ -387,7 +391,11 @@ Before each tool call, write one short sentence about what you're checking.`;
   }
 
   // Guardrail: the AI may not approve a post that fails the deterministic fact checks.
-  const hard = [...verifyMenuClaims(text, profile).issues, ...checkBrandRules(draft.caption, draft.hashtags, plan.platform, profile).issues].filter((i) => i.severity === "high");
+  const hard = [
+    ...verifyMenuClaims(text, profile).issues,
+    ...checkBrandRules(draft.caption, draft.hashtags, plan.platform, profile).issues,
+    ...checkDuplicates(draft.caption, others).issues,
+  ].filter((i) => i.severity === "high");
   if (review.decision === "approve" && hard.length) {
     review.decision = "revise";
     review.guardrail_override = `Automatic checks found ${hard.length} blocking issue(s), so the approval was overridden.`;

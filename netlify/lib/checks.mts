@@ -105,7 +105,12 @@ export function checkDuplicates(caption: string, recent: any[]) {
     .map((p) => ({ id: p.id, platform: p.platform, sim: similarity(caption, p.draft.caption), caption: p.draft.caption.slice(0, 80) }))
     .sort((a, b) => b.sim - a.sim);
   const top = scored[0];
-  const issues: Issue[] = top && top.sim > 0.45 ? [{ severity: "medium", problem: `Very similar (${Math.round(top.sim * 100)}%) to an existing post: "${top.caption}…"` }] : [];
+  const issues: Issue[] =
+    top && top.sim > 0.45
+      ? [{ severity: "high", problem: `Too similar (${Math.round(top.sim * 100)}%) to a post that already exists (${top.platform}): "${top.caption}…" Write a new hook and new wording.` }]
+      : top && top.sim > 0.3
+        ? [{ severity: "medium", problem: `Somewhat similar (${Math.round(top.sim * 100)}%) to an existing post: "${top.caption}…"` }]
+        : [];
   return { most_similar: top ? { ...top, similarity: Math.round(top.sim * 100) + "%" } : null, issues };
 }
 
