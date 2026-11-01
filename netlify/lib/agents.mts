@@ -131,6 +131,14 @@ function normalizePlan(plan: any, profile: Profile, count: number) {
   const tz = profile.timezone;
   const now = Date.now();
   const names = profile.menu.map((m) => m.name.toLowerCase());
+  // Map near-misses ("Cotton Candy Electric Slush Boba") to the real menu item name.
+  const toMenuName = (raw: string) => {
+    const r = String(raw).toLowerCase();
+    const exact = profile.menu.find((m) => m.name.toLowerCase() === r);
+    if (exact) return exact.name;
+    const hit = [...profile.menu].sort((a, b) => b.name.length - a.name.length).find((m) => r.includes(m.name.toLowerCase()) || m.name.toLowerCase().includes(r));
+    return hit ? hit.name : null;
+  };
   const items = (plan.posts || []).slice(0, count).map((p: any, i: number) => {
     let when = localToUtc(p.publish_at_local || "", tz);
     if (isNaN(when.getTime()) || when.getTime() < now + 10 * 60000) when = new Date(now + (i + 1) * 86400000);
@@ -138,7 +146,7 @@ function normalizePlan(plan: any, profile: Profile, count: number) {
     return {
       ...p,
       platform: PLATFORMS.includes(p.platform) ? p.platform : "Instagram",
-      menu_items: (p.menu_items || []).filter((m: string) => names.includes(String(m).toLowerCase())),
+      menu_items: [...new Set((p.menu_items || []).map(toMenuName).filter(Boolean))],
       publish_at_local: utcToLocal(when, tz),
       publish_at: when.toISOString(),
       weekday: weekday(when, tz),
@@ -239,11 +247,12 @@ export async function runWriter(input: { plan: any; previous?: any; feedback?: s
     description: "Submit the finished post.",
     input_schema: {
       type: "object",
-      required: ["caption", "hashtags", "visual_idea", "call_to_action"],
+      required: ["caption", "hashtags", "headline", "visual_idea", "call_to_action"],
       properties: {
         caption: { type: "string", description: "Post text WITHOUT hashtags." },
+        headline: { type: "string", description: "2–5 word headline printed on the graphic, like the shop's posters (e.g. 'VOLCANO SEASON', 'SWEET SWIRLS'). No prices or deals." },
         hashtags: { type: "array", items: { type: "string" }, description: "Hashtags without the # sign." },
-        visual_idea: { type: "string", description: "The graphic or video concept in Got Tiger's style: big bold headline text, a dramatic or seasonal scene, the drink or K-Dog as the hero with the tiger logo. One or two sentences the owner can turn into a design." },
+        visual_idea: { type: "string", description: "The graphic or video concept in Got Tiger's style: a dramatic or seasonal scene with the drink or K-Dog as the large hero (and which flavor/color it is). One or two sentences. Don't describe logos; the real logo is added separately." },
         call_to_action: { type: "string" },
         changes_made: { type: "string", description: "If revising: what you changed in response to feedback." },
       },
@@ -281,8 +290,9 @@ Before each tool call, write one short sentence about what you're doing.`;
   };
   const draft = cleanDraft({
     caption: input.previous ? lines[plan.platform].replace("!", ".") : lines[plan.platform] || lines.Instagram,
+    headline: item.name.split(/ with /i)[0].toUpperCase(),
     hashtags: plan.platform === "Bluesky" ? ["denverfoodie"] : (profile.hashtags?.length ? profile.hashtags : ["denverfoodie", "boba"]).slice(0, plan.platform === "Facebook" ? 2 : 5),
-    visual_idea: `Bold poster: "${item.name.toUpperCase()}" in big headline letters, the ${drink ? "cup" : "K-Dog"} as the hero with the Got Tiger logo, dramatic ${drink ? "cozy fall" : "fiery"} background.`,
+    visual_idea: `Bold poster: "${item.name.toUpperCase()}" in big headline letters, the ${drink ? "cup" : "K-Dog"} as the hero, dramatic ${drink ? "cozy fall" : "fiery"} background.`,
     call_to_action: "Visit today",
     changes_made: input.previous ? "Toned down punctuation per reviewer." : undefined,
   });
@@ -301,7 +311,7 @@ function cleanDraft(d: any) {
 // ---------------------------------------------------------------- BRAND REVIEWER
 export async function runReviewer(input: { plan: any; draft: any }, profile: Profile, posts: any[]) {
   const { plan, draft } = input;
-  const text = fullText(draft.caption, draft.hashtags);
+  const text = fullText(draft.caption, draft.hashtags) + (draft.headline ? `\n${draft.headline}` : "");
   const others = [
     ...posts.filter((p) => p.draft?.caption && p.draft.caption !== draft.caption),
     ...(profile.example_posts || []).map((c, i) => ({ id: `instagram-${i}`, platform: "Instagram (already posted)", draft: { caption: c } })),
@@ -364,7 +374,7 @@ Decide:
 Also judge things the tools can't: is it on-brand, does the hook work, does it mention items that aren't on the menu, is a promotion valid for the posting day (${plan.weekday})?
 Before each tool call, write one short sentence about what you're checking.`;
 
-  const userMessage = `Platform: ${plan.platform}\nScheduled: ${plan.weekday} ${plan.publish_at_local}\nPlan angle: ${plan.angle}\n\nDraft:\n${text}\n\nVisual idea: ${draft.visual_idea}`;
+  const userMessage = `Platform: ${plan.platform}\nScheduled: ${plan.weekday} ${plan.publish_at_local}\nPlan angle: ${plan.angle}\n\nDraft caption:\n${fullText(draft.caption, draft.hashtags)}\n\nHeadline on the graphic: ${draft.headline || "(none)"}\nVisual idea: ${draft.visual_idea}`;
 
   let review: any, trace: TraceStep[], model: string, mode: string;
   if (llmMode() === "live") {

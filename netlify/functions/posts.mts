@@ -1,6 +1,7 @@
 // Posts: list, create (after the agents finish), approve / reject / edit / delete.
 import type { Config, Context } from "@netlify/functions";
 import { runPublishingAutomation } from "../lib/automation.mts";
+import { generateGraphic, imageAvailable } from "../lib/designer.mts";
 import { deletePost, getPost, getProfile, listPosts, savePost } from "../lib/store.mts";
 import { localToUtc, utcToLocal } from "../lib/time.mts";
 
@@ -39,8 +40,21 @@ export default async (req: Request, context: Context) => {
 
   const body = await req.json().catch(() => ({}));
   const profile = await getProfile();
+
+  if (action === "graphic") {
+    if (!imageAvailable()) return Response.json({ error: "Image generation isn't available here (it runs on the live Netlify site)." }, { status: 503 });
+    try {
+      if (body.headline !== undefined) post.draft.headline = String(body.headline);
+      post.image = await generateGraphic(post, profile, body.tweak);
+      return Response.json({ post: await savePost(post) });
+    } catch (e: any) {
+      console.error("graphic", e);
+      return Response.json({ error: `Designer failed: ${e?.message || e}` }, { status: 500 });
+    }
+  }
   if (body.caption !== undefined) post.draft.caption = String(body.caption);
   if (body.hashtags !== undefined) post.draft.hashtags = body.hashtags;
+  if (body.headline !== undefined) post.draft.headline = String(body.headline);
   if (body.caption !== undefined || body.hashtags !== undefined) post.ownerEdited = true;
 
   if (action === "approve") {

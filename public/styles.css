@@ -186,6 +186,20 @@ details ul { margin: 6px 0 0; padding-left: 18px; }
 .row .txt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); }
 .row .when { color: var(--muted); font-size: 13px; white-space: nowrap; }
 
+.lane-design { border-top: 1px solid var(--line); padding: 14px 20px; display: flex; gap: 16px; align-items: center; font-size: 14px; background: #fdfaf6; }
+.lane-design img { width: 140px; border-radius: 10px; box-shadow: var(--shadow); }
+.lane-design p { margin: 6px 0 0; }
+.muted { color: var(--muted); }
+.graphic { background: #1a1410; border-radius: 14px; overflow: hidden; display: flex; justify-content: center; position: relative; }
+.graphic img { width: 100%; max-width: 360px; display: block; }
+.graphic-empty { color: #c9b9aa; padding: 60px 20px; font-size: 14px; }
+.graphic.loading::after { content: "Designing…"; position: absolute; inset: 0; display: grid; place-items: center; background: rgba(26,20,16,.6); color: #fff; font-weight: 700; }
+.graphic-actions { display: flex; flex-direction: column; gap: 8px; }
+.graphic-actions label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; }
+.graphic-actions label em { color: var(--muted); font-weight: 400; font-style: normal; }
+a.btn { text-decoration: none; display: inline-block; }
+.feed-img { width: 100%; display: block; }
+
 /* Automation */
 .flow { display: grid; grid-template-columns: 1.1fr repeat(4, 1fr); gap: 10px; margin-bottom: 20px; }
 .flow > div { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 4px; position: relative; }

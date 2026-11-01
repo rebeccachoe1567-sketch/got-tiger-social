@@ -140,7 +140,8 @@ async function runPost(plan, i, batchId, strategySummary) {
         <div class="agent-head"><div class="agent-icon r">3</div><div><h3>Brand Reviewer agent</h3></div><span class="state" data-r>waiting</span></div>
         <div data-rout></div>
       </div>
-    </div>`;
+    </div>
+    <div class="lane-design hidden" data-design></div>`;
   $("#postLanes").appendChild(lane);
   const wState = $("[data-w]", lane), rState = $("[data-r]", lane);
   const wOut = $("[data-wout]", lane), rOut = $("[data-rout]", lane);
@@ -170,7 +171,18 @@ async function runPost(plan, i, batchId, strategySummary) {
       if (review.decision !== "revise") break;
     }
     setState(rState, review.decision === "approve" ? "done" : "warn", review.decision === "approve" ? "approved" : review.decision === "reject" ? "rejected" : "needs owner");
-    await api("/api/posts", { plan, draft, review, rounds, batchId, strategySummary });
+    const saved = await api("/api/posts", { plan, draft, review, rounds, batchId, strategySummary });
+    if (review.decision !== "reject") {
+      const d = $("[data-design]", lane);
+      d.classList.remove("hidden");
+      d.innerHTML = `<span class="state running">designing</span> <span>🎨 Designer is creating the ${esc(plan.platform)} graphic${draft.headline ? ` (“${esc(draft.headline)}”)` : ""}…</span>`;
+      try {
+        const g = await api(`/api/posts/${saved.id}/graphic`, {});
+        d.innerHTML = `<img src="${esc(g.post.image.url)}" alt="Generated graphic"><div><span class="state done">graphic ready</span><p>Headline: <b>${esc(draft.headline || "—")}</b></p><p class="muted">Review, regenerate or download it in Approvals.</p></div>`;
+      } catch (e) {
+        d.innerHTML = `<span class="state warn">no graphic</span> <span>${esc(e.message)} You can generate it from Approvals.</span>`;
+      }
+    }
   } catch (err) {
     setState(wState.classList.contains("running") ? wState : rState, "error", "error");
     wOut.insertAdjacentHTML("beforeend", `<div class="verdict reject">${esc(err.message)}</div>`);
@@ -231,6 +243,12 @@ function postCard(p) {
       <span class="score" style="color:${scoreColor(r.score)}">${esc(r.score ?? "–")}<small>/10</small></span>
     </div>
     ${p.heldReason ? `<div class="meta" style="background:var(--red-soft)"><b>Held:</b> ${esc(p.heldReason)}</div>` : ""}
+    <div class="graphic" data-graphic>${p.image?.url ? `<img src="${esc(p.image.url)}" alt="Post graphic">` : `<div class="graphic-empty">No graphic yet</div>`}</div>
+    <div class="graphic-actions">
+      <label>Headline on graphic<input data-headline value="${esc(p.draft?.headline || "")}" placeholder="e.g. VOLCANO SEASON"></label>
+      <label>Changes for the designer <em>(optional)</em><input data-tweak placeholder="e.g. darker background, more fall leaves"></label>
+      <div class="actions"><button class="btn" data-regen>${p.image?.url ? "↻ Regenerate graphic" : "🎨 Generate graphic"}</button><a class="btn ${p.image?.url ? "" : "hidden"}" data-dl href="${p.image?.url ? esc(p.image.url) + "&download=1" : "#"}">⬇ Download</a><button class="btn" data-copy>Copy caption</button></div>
+    </div>
     <textarea data-caption>${esc(p.draft?.caption)}</textarea>
     <input class="tags" data-tags value="${esc((p.draft?.hashtags || []).map((h) => "#" + h).join(" "))}" placeholder="#hashtags" />
     <div class="charcount" data-count></div>
@@ -261,7 +279,7 @@ function postCard(p) {
   const send = async (action, extra = {}) => {
     $$("button", el).forEach((b) => (b.disabled = true));
     try {
-      const out = await api(`/api/posts/${p.id}/${action}`, { caption: cap.value, hashtags: parseTags(), scheduledLocal: $("[data-when]", el).value, ...extra });
+      const out = await api(`/api/posts/${p.id}/${action}`, { caption: cap.value, hashtags: parseTags(), headline: $("[data-headline]", el).value, scheduledLocal: $("[data-when]", el).value, ...extra });
       if (action === "approve" && extra.publishNow) {
         const st = out.post?.status;
         toast(st === "published" ? `Published to ${out.post.publishTarget} ✅` : `Held: ${out.post?.heldReason || "see Automation"}`, 5000);
@@ -270,6 +288,35 @@ function postCard(p) {
     } catch (e) {
       toast(e.message, 6000);
       $$("button", el).forEach((b) => (b.disabled = false));
+    }
+  };
+  $("[data-regen]", el).onclick = async (ev) => {
+    const b = ev.currentTarget;
+    b.disabled = true;
+    b.textContent = "Designing… (~20s)";
+    $("[data-graphic]", el).classList.add("loading");
+    try {
+      const out = await api(`/api/posts/${p.id}/graphic`, { headline: $("[data-headline]", el).value, tweak: $("[data-tweak]", el).value });
+      p.image = out.post.image;
+      $("[data-graphic]", el).innerHTML = `<img src="${esc(p.image.url)}" alt="Post graphic">`;
+      const dl = $("[data-dl]", el);
+      dl.href = p.image.url + "&download=1";
+      dl.classList.remove("hidden");
+      b.textContent = "↻ Regenerate graphic";
+    } catch (e) {
+      toast(e.message, 7000);
+      b.textContent = p.image?.url ? "↻ Regenerate graphic" : "🎨 Generate graphic";
+    } finally {
+      b.disabled = false;
+      $("[data-graphic]", el).classList.remove("loading");
+    }
+  };
+  $("[data-copy]", el).onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(fullText({ caption: cap.value, hashtags: parseTags() }));
+      toast("Caption + hashtags copied");
+    } catch {
+      toast("Couldn't copy. Select the text and copy it manually.");
     }
   };
   $("[data-approve]", el).onclick = () => send("approve");
@@ -323,9 +370,9 @@ async function loadFeed() {
           const body = esc(p.draft.caption) + (p.draft.hashtags?.length ? `\n\n<span class="ht">${p.draft.hashtags.map((h) => "#" + esc(h)).join(" ")}</span>` : "");
           return `<article class="phone">
             <div class="phone-head"><div class="avatar">🐯</div><div><b>${esc(PROFILE.instagram || PROFILE.name)}</b><small>${esc(PROFILE.city)}</small></div><span class="chip ${esc(p.platform)}">${esc(p.platform)}</span></div>
-            ${p.platform === "Bluesky" ? "" : `<div class="visual ${cls}"><div class="emoji">${emoji}</div><div class="idea"><b>Graphic concept</b>${esc(p.draft.visual_idea)}</div></div>`}
+            ${p.image?.url ? `<img class="feed-img" src="${esc(p.image.url)}" alt="Post graphic">` : p.platform === "Bluesky" ? "" : `<div class="visual ${cls}"><div class="emoji">${emoji}</div><div class="idea"><b>Graphic concept</b>${esc(p.draft.visual_idea)}</div></div>`}
             <div class="phone-body">${body}</div>
-            <div class="phone-foot"><span>${esc(fmtWhen(p.publishedAt))} · ${esc(p.publishTarget)}</span>${p.externalUrl ? `<a href="${esc(p.externalUrl)}" target="_blank" rel="noopener">View live ↗</a>` : ""}</div>
+            <div class="phone-foot"><span>${esc(fmtWhen(p.publishedAt))} · ${esc(p.publishTarget)}</span>${p.externalUrl ? `<a href="${esc(p.externalUrl)}" target="_blank" rel="noopener">View live ↗</a>` : p.image?.url ? `<a href="${esc(p.image.url)}&download=1">Download ⬇</a>` : ""}</div>
           </article>`;
         })
         .join("")
