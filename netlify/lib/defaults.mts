@@ -7,6 +7,7 @@ export type MenuItem = { name: string; price: number; category: string; tags: st
 
 export type Profile = {
   name: string;
+  former_name: string;
   tagline: string;
   instagram: string;
   city: string;
@@ -30,6 +31,7 @@ export type Profile = {
 
 export const DEFAULT_PROFILE: Profile = {
   name: "Got Tiger",
+  former_name: "ThirsTea Tiger (old name, still on some cups and signs while the rebrand finishes)",
   tagline: "K-Dog · Boba · Good Vibes",
   instagram: "got_tiger_k.dog.boba",
   city: "Lakewood, CO",

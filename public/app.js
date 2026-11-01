@@ -340,6 +340,7 @@ async function loadProfile() {
     <div class="card">
       <h3>Basics</h3>
       <label>Business name<input name="name" value="${esc(p.name)}"></label>
+      <label>Former name <small>(may still appear on cups/signs)</small><input name="former_name" value="${esc(p.former_name || "")}"></label>
       <label>Tagline<input name="tagline" value="${esc(p.tagline)}"></label>
       <label>Instagram handle<input name="instagram" value="${esc(p.instagram || "")}"></label>
       <label>Locations<input name="locations" value="${esc(p.locations || "")}"></label>
@@ -387,7 +388,7 @@ $("#saveProfile").addEventListener("click", async () => {
   const f = $("#profileForm");
   const v = (n) => f.elements[n].value;
   const body = {
-    name: v("name"), tagline: v("tagline"), instagram: v("instagram"), locations: v("locations"), city: v("city"),
+    name: v("name"), former_name: v("former_name"), tagline: v("tagline"), instagram: v("instagram"), locations: v("locations"), city: v("city"),
     example_posts: v("example_posts").split("\n").map((s) => s.trim()).filter(Boolean),
     hashtags: v("hashtags").split(",").map((s) => s.trim().replace(/^#/, "")).filter(Boolean), latitude: v("latitude"), longitude: v("longitude"), timezone: v("timezone"),
     hours: v("hours"), slow_times: v("slow_times"), audience: v("audience"), voice: v("voice"),

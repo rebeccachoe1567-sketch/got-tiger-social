@@ -35,7 +35,7 @@ export async function runStrategist(input: { goal?: string; count?: number }, pr
       name: "get_business_profile",
       description: "Business basics: location, hours, audience, slow times, active promotions.",
       input_schema: { type: "object", properties: {} },
-      run: () => ({ name: profile.name, tagline: profile.tagline, instagram: profile.instagram, locations: profile.locations, city: profile.city, hours: profile.hours, audience: profile.audience, slow_times: profile.slow_times, promotions: profile.promotions, platforms }),
+      run: () => ({ name: profile.name, former_name: profile.former_name, tagline: profile.tagline, instagram: profile.instagram, locations: profile.locations, city: profile.city, hours: profile.hours, audience: profile.audience, slow_times: profile.slow_times, promotions: profile.promotions, platforms }),
       summarize: (o) => `${o.name} · ${o.city} · slow: ${o.slow_times}`,
     },
     {
@@ -199,7 +199,7 @@ export async function runWriter(input: { plan: any; previous?: any; feedback?: s
       name: "get_brand_voice",
       description: "Brand voice, real example captions from the shop's Instagram, hashtag bank, audience, banned phrases and active promotions.",
       input_schema: { type: "object", properties: {} },
-      run: () => ({ voice: profile.voice, example_posts: profile.example_posts, hashtag_bank: profile.hashtags, audience: profile.audience, banned_phrases: profile.banned_phrases, active_promotions: profile.promotions, locations: profile.locations, hours: profile.hours }),
+      run: () => ({ voice: profile.voice, former_name: profile.former_name, example_posts: profile.example_posts, hashtag_bank: profile.hashtags, audience: profile.audience, banned_phrases: profile.banned_phrases, active_promotions: profile.promotions, locations: profile.locations, hours: profile.hours }),
       summarize: () => "Brand voice + banned phrases loaded",
     },
     {
@@ -253,6 +253,7 @@ export async function runWriter(input: { plan: any; previous?: any; feedback?: s
   const system = `You are the Copywriter agent for ${profile.name} (${profile.tagline}), a family-owned K-Dog and boba shop at ${profile.locations || profile.city}.
 You turn a strategist's plan into a ready-to-post caption for one platform, in the SAME style as the shop's real example posts (get_brand_voice): a short punchy hook, one sensory line, a few matching emojis.
 Pick hashtags mostly from the hashtag bank. Call corn dogs "K-Dogs".
+The shop is "${profile.name}". Its former name (${profile.former_name || "none"}) may still show on cups or signs; don't treat it as an error.
 Process: load the brand voice and platform rules, get exact menu details, write a draft, run check_draft, fix any issues, then submit.
 Never invent menu items, prices, hours or promotions. Only mention a price if get_menu_details shows one, and then exactly that price.
 Before each tool call, write one short sentence about what you're doing.`;
