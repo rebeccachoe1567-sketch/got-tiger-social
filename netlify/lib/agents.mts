@@ -35,14 +35,14 @@ export async function runStrategist(input: { goal?: string; count?: number }, pr
       name: "get_business_profile",
       description: "Business basics: location, hours, audience, slow times, active promotions.",
       input_schema: { type: "object", properties: {} },
-      run: () => ({ name: profile.name, tagline: profile.tagline, city: profile.city, hours: profile.hours, audience: profile.audience, slow_times: profile.slow_times, promotions: profile.promotions, platforms }),
+      run: () => ({ name: profile.name, tagline: profile.tagline, instagram: profile.instagram, locations: profile.locations, city: profile.city, hours: profile.hours, audience: profile.audience, slow_times: profile.slow_times, promotions: profile.promotions, platforms }),
       summarize: (o) => `${o.name} · ${o.city} · slow: ${o.slow_times}`,
     },
     {
       name: "get_menu",
-      description: "Full menu with prices and tags (bestseller, spicy, new, iced...).",
+      description: "Full menu with prices and tags (bestseller, spicy, new, seasonal...). Price 'not on file' means never mention a price.",
       input_schema: { type: "object", properties: {} },
-      run: () => profile.menu,
+      run: () => profile.menu.map((m) => ({ ...m, price: m.price ? m.price : "not on file" })),
       summarize: (o) => `${o.length} menu items loaded`,
     },
     {
@@ -107,7 +107,7 @@ export async function runStrategist(input: { goal?: string; count?: number }, pr
     run: () => null,
   };
 
-  const system = `You are the Content Strategist agent for ${profile.name}, a family-owned ${profile.tagline} shop in ${profile.city}.
+  const system = `You are the Content Strategist agent for ${profile.name} (${profile.tagline}), a family-owned Korean corn dog (K-Dog) and boba shop at ${profile.locations || profile.city}.
 Your job: decide WHAT to post, on WHICH platform, and WHEN, for the next week.
 Work like a real strategist: look up the data you need with your tools (calendar, weather, menu, posting insights, recent posts) before deciding.
 Decision rules:
@@ -115,6 +115,7 @@ Decision rules:
 - Use real context: weather (iced vs hot), holidays/events, and slow periods that need traffic.
 - Spread posts across different days and platforms that fit the audience.
 - Only use exact menu item names from get_menu. Only reference promotions that are active.
+- Respect item tags: skip anything tagged as a past seasonal special unless the owner's goal asks for it; favor "new" and "limited time" items.
 Before each tool call, write one short sentence about what you're checking and why.`;
 
   const userMessage = `Plan ${count} social media posts for the next 7 days.${input.goal ? ` The owner's goal this week: "${input.goal}".` : ""}`;
@@ -161,12 +162,18 @@ async function offlineStrategist(input: any, profile: Profile, posts: any[], cou
   const used = new Set(recent.flatMap((r: any) => r.menu_items || []));
   const warm = !weather.unavailable && weather.days[1]?.high_f >= 70;
   const pool = [...profile.menu].sort((a, b) => Number(used.has(a.name)) - Number(used.has(b.name)));
-  const pick = (cat: string, pref?: string) => pool.find((m) => m.category === cat && (!pref || m.tags.includes(pref)) && !used.has(m.name)) || pool.find((m) => m.category === cat)!;
-  const choices = [pick("Corn dog", "cheese pull"), warm ? pick("Boba", "iced") : pick("Boba", "bestseller"), pick("Combo"), pick("Corn dog", "spicy"), pick("Boba", "photogenic")];
+  const fresh = pool.filter((m) => !m.tags.some((t) => /halloween|seasonal special/i.test(t)));
+  const pick = (cat: string, pref?: string) =>
+    fresh.find((m) => m.category === cat && (!pref || m.tags.includes(pref)) && !used.has(m.name) && !chosen.has(m.name)) ||
+    fresh.find((m) => m.category === cat && !chosen.has(m.name)) ||
+    fresh.find((m) => !chosen.has(m.name)) || fresh[0];
+  const chosen = new Set<string>();
+  const take = (m: any) => (chosen.add(m.name), m);
+  const choices = [take(pick("K-Dog", "new")), take(pick("Boba", warm ? "iced" : "bestseller")), take(pick("K-Dog", "cheese pull")), take(pick("Boba")), take(pick("K-Dog"))];
   const plats = ["Instagram", "TikTok", "Facebook", "Bluesky", "Instagram"].filter((p) => profile.platforms.includes(p));
   const times = ["11:15", "15:00", "18:30", "11:30", "19:00"];
   const plan = {
-    summary: `Mix of a cheese-pull hero post, a ${warm ? "cool-down iced drink" : "cozy boba"} post and a value combo to fill the slow ${profile.slow_times}.`,
+    summary: `Lead with the newest K-Dog, follow with a ${warm ? "cool-down" : "cozy fall"} boba post, then a classic K-Dog to keep the feed varied.`,
     posts: choices.slice(0, count).map((m, i) => {
       const d = new Date(Date.now() + (i + 1) * 86400000);
       return {
@@ -174,7 +181,7 @@ async function offlineStrategist(input: any, profile: Profile, posts: any[], cou
         publish_at_local: `${utcToLocal(d, profile.timezone).slice(0, 10)} ${times[i]}`,
         menu_items: [m.name],
         angle: `Spotlight the ${m.name}`,
-        goal: m.category === "Combo" ? "fill_slow_period" : "promote_item",
+        goal: m.tags.includes("new") ? "promote_item" : i === 2 ? "fill_slow_period" : "engagement",
         format: i === 1 ? "short_video" : "photo",
         reasoning: `Not posted recently; ${m.tags.join(", ")}.`,
       };
@@ -190,9 +197,9 @@ export async function runWriter(input: { plan: any; previous?: any; feedback?: s
   const tools: AgentTool[] = [
     {
       name: "get_brand_voice",
-      description: "Brand voice, audience, banned phrases and active promotions.",
+      description: "Brand voice, real example captions from the shop's Instagram, hashtag bank, audience, banned phrases and active promotions.",
       input_schema: { type: "object", properties: {} },
-      run: () => ({ voice: profile.voice, audience: profile.audience, banned_phrases: profile.banned_phrases, active_promotions: profile.promotions, city: profile.city, hours: profile.hours }),
+      run: () => ({ voice: profile.voice, example_posts: profile.example_posts, hashtag_bank: profile.hashtags, audience: profile.audience, banned_phrases: profile.banned_phrases, active_promotions: profile.promotions, locations: profile.locations, hours: profile.hours }),
       summarize: () => "Brand voice + banned phrases loaded",
     },
     {
@@ -211,7 +218,7 @@ export async function runWriter(input: { plan: any; previous?: any; feedback?: s
         const found = profile.menu.filter((m) => !want.length || want.some((w: string) => m.name.toLowerCase().includes(w) || w.includes(m.name.toLowerCase())));
         return found.length ? found : profile.menu;
       },
-      summarize: (o) => o.slice(0, 3).map((m: any) => `${m.name} $${m.price}`).join(", "),
+      summarize: (o) => o.slice(0, 3).map((m: any) => (m.price ? `${m.name} $${m.price}` : `${m.name} (no price on file)`)).join(", "),
     },
     {
       name: "check_draft",
@@ -235,7 +242,7 @@ export async function runWriter(input: { plan: any; previous?: any; feedback?: s
       properties: {
         caption: { type: "string", description: "Post text WITHOUT hashtags." },
         hashtags: { type: "array", items: { type: "string" }, description: "Hashtags without the # sign." },
-        visual_idea: { type: "string", description: "What the photo/video should show, so the owner can shoot it in 2 minutes." },
+        visual_idea: { type: "string", description: "The graphic or video concept in Got Tiger's style: big bold headline text, a dramatic or seasonal scene, the drink or K-Dog as the hero with the tiger logo. One or two sentences the owner can turn into a design." },
         call_to_action: { type: "string" },
         changes_made: { type: "string", description: "If revising: what you changed in response to feedback." },
       },
@@ -243,10 +250,11 @@ export async function runWriter(input: { plan: any; previous?: any; feedback?: s
     run: () => null,
   };
 
-  const system = `You are the Copywriter agent for ${profile.name} (${profile.tagline}, ${profile.city}).
-You turn a strategist's plan into a ready-to-post caption for one platform.
+  const system = `You are the Copywriter agent for ${profile.name} (${profile.tagline}), a family-owned K-Dog and boba shop at ${profile.locations || profile.city}.
+You turn a strategist's plan into a ready-to-post caption for one platform, in the SAME style as the shop's real example posts (get_brand_voice): a short punchy hook, one sensory line, a few matching emojis.
+Pick hashtags mostly from the hashtag bank. Call corn dogs "K-Dogs".
 Process: load the brand voice and platform rules, get exact menu details, write a draft, run check_draft, fix any issues, then submit.
-Never invent menu items, prices or promotions. Only mention a price if it is exactly the menu price.
+Never invent menu items, prices, hours or promotions. Only mention a price if get_menu_details shows one, and then exactly that price.
 Before each tool call, write one short sentence about what you're doing.`;
 
   const userMessage =
@@ -260,16 +268,18 @@ Before each tool call, write one short sentence about what you're doing.`;
   // Offline scripted writer
   const trace: TraceStep[] = [{ type: "thought", text: "Offline demo mode: using a caption template." }];
   const item = profile.menu.find((m) => plan.menu_items?.includes(m.name)) || profile.menu[0];
+  const drink = item.category !== "K-Dog";
+  const e = drink ? "🧋" : "🔥";
   const lines: Record<string, string> = {
-    Instagram: `That cheese pull hits different 🐯 Our ${item.name} is fried fresh to order, crispy outside and gooey inside. Come grab one this ${plan.weekday}!`,
-    TikTok: `Wait for the crunch 🌽 ${item.name}, made fresh at ${profile.name}.`,
-    Facebook: `Family-made and fried fresh: the ${item.name} is waiting for you at ${profile.name} in ${profile.city}. Open ${profile.hours.split(",")[0]}.`,
-    Bluesky: `Snack check 🐯 The ${item.name} at ${profile.name} is crunchy, fresh and ready for you this ${plan.weekday}.`,
+    Instagram: drink ? `Your ${plan.weekday} needs this. ${e} ${item.name}: smooth, sweet and made to order. Come say hi!` : `Think you can handle the crunch? ${e} ${item.name}, fried fresh and loaded with flavor. Come grab one!`,
+    TikTok: drink ? `Watch the swirl ${e} ${item.name} at ${profile.name}.` : `Listen to that crunch ${e} ${item.name} at ${profile.name}.`,
+    Facebook: `${item.name} is waiting for you at ${profile.name} ${e} Made fresh by our family at ${profile.locations || profile.city}.`,
+    Bluesky: `${plan.weekday} plans: ${item.name} at ${profile.name} ${e} Made fresh, made with love.`,
   };
   const draft = cleanDraft({
     caption: input.previous ? lines[plan.platform].replace("!", ".") : lines[plan.platform] || lines.Instagram,
-    hashtags: plan.platform === "Bluesky" ? ["koreancorndog"] : ["gottiger", "koreancorndog", "boba", "kfood"].slice(0, plan.platform === "Facebook" ? 2 : 4),
-    visual_idea: `Close-up of the ${item.name} held up against the shop sign.`,
+    hashtags: plan.platform === "Bluesky" ? ["denverfoodie"] : (profile.hashtags?.length ? profile.hashtags : ["denverfoodie", "boba"]).slice(0, plan.platform === "Facebook" ? 2 : 5),
+    visual_idea: `Bold poster: "${item.name.toUpperCase()}" in big headline letters, the ${drink ? "cup" : "K-Dog"} as the hero with the Got Tiger logo, dramatic ${drink ? "cozy fall" : "fiery"} background.`,
     call_to_action: "Visit today",
     changes_made: input.previous ? "Toned down punctuation per reviewer." : undefined,
   });
@@ -369,7 +379,7 @@ Before each tool call, write one short sentence about what you're checking.`;
       score: high ? 4 : Math.max(6, 9 - issues.length),
       issues,
       feedback_for_writer: high ? issues.map((i: any) => i.problem).join(" ") : "",
-      owner_should_check: "Make sure you can take the photo described before approving.",
+      owner_should_check: "Make sure the graphic for this post is ready before approving.",
     };
     trace.push({ type: "final", tool: "submit_review" });
     model = "offline-script"; mode = "offline";

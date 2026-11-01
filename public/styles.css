@@ -226,7 +226,7 @@ details ul { margin: 6px 0 0; padding-left: 18px; }
 
 /* Profile */
 .note { background: var(--amber-soft); border: 1px solid #f2dca4; padding: 12px 16px; border-radius: 12px; margin-bottom: 18px; }
-.profile-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.profile-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
 .profile-grid .card { display: flex; flex-direction: column; gap: 12px; }
 .profile-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; }
 .profile-grid label small { color: var(--muted); font-weight: 400; }

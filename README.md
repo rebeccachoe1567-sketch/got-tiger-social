@@ -1,6 +1,6 @@
 # 🐯 Got Tiger Social Studio
 
-An AI social media team for **Got Tiger**, a family-owned Korean corn dog & boba shop.
+An AI social media team for **Got Tiger** (K-Dog · Boba · Good Vibes, [@got_tiger_k.dog.boba](https://www.instagram.com/got_tiger_k.dog.boba/)), a family-owned Korean corn dog & boba shop in the Denver area.
 Built for the AI Club / CU Boulder Applied AI Development Program capstone.
 
 **User:** the owner of a small family restaurant.

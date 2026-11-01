@@ -233,7 +233,7 @@ function postCard(p) {
     <textarea data-caption>${esc(p.draft?.caption)}</textarea>
     <input class="tags" data-tags value="${esc((p.draft?.hashtags || []).map((h) => "#" + h).join(" "))}" placeholder="#hashtags" />
     <div class="charcount" data-count></div>
-    <div class="meta"><b>📸 Photo/video to take:</b> ${esc(p.draft?.visual_idea)}</div>
+    <div class="meta"><b>🎨 Visual to create:</b> ${esc(p.draft?.visual_idea)}</div>
     <div class="meta"><b>Why this post:</b> ${esc(p.plan?.reasoning)}</div>
     ${r.owner_should_check ? `<div class="meta" style="background:var(--orange-soft)"><b>👀 Double-check:</b> ${esc(r.owner_should_check)}</div>` : ""}
     <details><summary>Agent review details (${issues.length} note${issues.length === 1 ? "" : "s"}, ${(p.rounds || []).length} round${(p.rounds || []).length === 1 ? "" : "s"})</summary>
@@ -315,13 +315,14 @@ async function loadFeed() {
   $("#feed").innerHTML = posts.length
     ? posts
         .map((p) => {
-          const cat = menu[(p.plan?.menu_items || [])[0]] || "Corn dog";
-          const cls = cat === "Boba" ? "boba" : cat === "Combo" ? "combo" : "";
-          const emoji = cat === "Boba" ? "🧋" : cat === "Combo" ? "🌽🧋" : "🌽";
+          const cat = menu[(p.plan?.menu_items || [])[0]] || "K-Dog";
+          const drink = cat !== "K-Dog";
+          const cls = drink ? "boba" : "";
+          const emoji = drink ? "🧋" : "🌽";
           const body = esc(p.draft.caption) + (p.draft.hashtags?.length ? `\n\n<span class="ht">${p.draft.hashtags.map((h) => "#" + esc(h)).join(" ")}</span>` : "");
           return `<article class="phone">
-            <div class="phone-head"><div class="avatar">🐯</div><div><b>${esc(PROFILE.name)}</b><small>${esc(PROFILE.city)}</small></div><span class="chip ${esc(p.platform)}">${esc(p.platform)}</span></div>
-            ${p.platform === "Bluesky" ? "" : `<div class="visual ${cls}"><div class="emoji">${emoji}</div><div class="idea"><b>Photo to shoot</b>${esc(p.draft.visual_idea)}</div></div>`}
+            <div class="phone-head"><div class="avatar">🐯</div><div><b>${esc(PROFILE.instagram || PROFILE.name)}</b><small>${esc(PROFILE.city)}</small></div><span class="chip ${esc(p.platform)}">${esc(p.platform)}</span></div>
+            ${p.platform === "Bluesky" ? "" : `<div class="visual ${cls}"><div class="emoji">${emoji}</div><div class="idea"><b>Graphic concept</b>${esc(p.draft.visual_idea)}</div></div>`}
             <div class="phone-body">${body}</div>
             <div class="phone-foot"><span>${esc(fmtWhen(p.publishedAt))} · ${esc(p.publishTarget)}</span>${p.externalUrl ? `<a href="${esc(p.externalUrl)}" target="_blank" rel="noopener">View live ↗</a>` : ""}</div>
           </article>`;
@@ -340,7 +341,9 @@ async function loadProfile() {
       <h3>Basics</h3>
       <label>Business name<input name="name" value="${esc(p.name)}"></label>
       <label>Tagline<input name="tagline" value="${esc(p.tagline)}"></label>
-      <label>City<input name="city" value="${esc(p.city)}"></label>
+      <label>Instagram handle<input name="instagram" value="${esc(p.instagram || "")}"></label>
+      <label>Locations<input name="locations" value="${esc(p.locations || "")}"></label>
+      <label>City <small>(used for the weather forecast)</small><input name="city" value="${esc(p.city)}"></label>
       <div class="inline">
         <label>Latitude<input name="latitude" value="${esc(p.latitude)}"></label>
         <label>Longitude<input name="longitude" value="${esc(p.longitude)}"></label>
@@ -353,9 +356,11 @@ async function loadProfile() {
       <h3>Brand</h3>
       <label>Audience<textarea name="audience" rows="2">${esc(p.audience)}</textarea></label>
       <label>Brand voice<textarea name="voice" rows="4">${esc(p.voice)}</textarea></label>
+      <label>Example captions <small>(one per line — the Writer copies this style)</small><textarea name="example_posts" rows="4">${esc((p.example_posts || []).join("\n"))}</textarea></label>
+      <label>Hashtag bank <small>(comma separated, no #)</small><input name="hashtags" value="${esc((p.hashtags || []).join(", "))}"></label>
       <label>Banned phrases <small>(comma separated — posts using these are blocked)</small><input name="banned_phrases" value="${esc(p.banned_phrases.join(", "))}"></label>
       <label>Active promotions <small>(one per line — any deal not listed here is blocked)</small><textarea name="promotions" rows="3">${esc(p.promotions.join("\n"))}</textarea></label>
-      <label>Local events <small>(one per line: YYYY-MM-DD | event)</small><textarea name="events" rows="3" placeholder="2026-11-07 | CU home football game">${esc((p.events || []).map((e) => `${e.date} | ${e.name}`).join("\n"))}</textarea></label>
+      <label>Local events <small>(one per line: YYYY-MM-DD | event)</small><textarea name="events" rows="3" placeholder="2026-11-27 | Colorado Mills Black Friday sale">${esc((p.events || []).map((e) => `${e.date} | ${e.name}`).join("\n"))}</textarea></label>
     </div>
     <div class="card full">
       <h3>Menu &amp; prices</h3>
@@ -363,9 +368,9 @@ async function loadProfile() {
       <div><button type="button" class="btn" id="addItem">+ Add item</button> <button type="button" class="btn ghost danger" id="resetDemo">Clear all demo posts &amp; logs</button></div>
     </div>`;
   const rows = $("#menuRows");
-  const addRow = (m = { name: "", price: "", category: "Corn dog", tags: [] }) => {
+  const addRow = (m = { name: "", price: "", category: "K-Dog", tags: [] }) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td><input data-k="name" value="${esc(m.name)}"></td><td class="price"><input data-k="price" type="number" step="0.01" value="${esc(m.price)}"></td><td><input data-k="category" value="${esc(m.category)}"></td><td><input data-k="tags" value="${esc((m.tags || []).join(", "))}"></td><td><button type="button" class="x" title="Remove">×</button></td>`;
+    tr.innerHTML = `<td><input data-k="name" value="${esc(m.name)}"></td><td class="price"><input data-k="price" type="number" step="0.01" placeholder="not set" value="${m.price ? esc(m.price) : ""}"></td><td><input data-k="category" value="${esc(m.category)}"></td><td><input data-k="tags" value="${esc((m.tags || []).join(", "))}"></td><td><button type="button" class="x" title="Remove">×</button></td>`;
     $(".x", tr).onclick = () => tr.remove();
     rows.appendChild(tr);
   };
@@ -382,7 +387,9 @@ $("#saveProfile").addEventListener("click", async () => {
   const f = $("#profileForm");
   const v = (n) => f.elements[n].value;
   const body = {
-    name: v("name"), tagline: v("tagline"), city: v("city"), latitude: v("latitude"), longitude: v("longitude"), timezone: v("timezone"),
+    name: v("name"), tagline: v("tagline"), instagram: v("instagram"), locations: v("locations"), city: v("city"),
+    example_posts: v("example_posts").split("\n").map((s) => s.trim()).filter(Boolean),
+    hashtags: v("hashtags").split(",").map((s) => s.trim().replace(/^#/, "")).filter(Boolean), latitude: v("latitude"), longitude: v("longitude"), timezone: v("timezone"),
     hours: v("hours"), slow_times: v("slow_times"), audience: v("audience"), voice: v("voice"),
     banned_phrases: v("banned_phrases").split(",").map((s) => s.trim()).filter(Boolean),
     promotions: v("promotions").split("\n").map((s) => s.trim()).filter(Boolean),

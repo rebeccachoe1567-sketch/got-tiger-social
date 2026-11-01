@@ -21,7 +21,7 @@ export function verifyMenuClaims(text: string, profile: Profile) {
   const priceRe = /\$\s?(\d+(?:\.\d{1,2})?)/g;
   const prices = [...text.matchAll(priceRe)].map((m) => Number(m[1]));
   for (const p of prices) {
-    const onMenu = profile.menu.some((m) => Math.abs(m.price - p) < 0.005);
+    const onMenu = profile.menu.some((m) => m.price > 0 && Math.abs(m.price - p) < 0.005);
     const inPromo = promoText.includes(String(p));
     if (!onMenu && !inPromo) issues.push({ severity: "high", problem: `Price $${p.toFixed(2)} does not match any menu item or active promotion.` });
   }
@@ -30,7 +30,9 @@ export function verifyMenuClaims(text: string, profile: Profile) {
     const idx = t.indexOf(norm(m.name));
     const window = text.slice(idx, idx + m.name.length + 40);
     const pm = window.match(/\$\s?(\d+(?:\.\d{1,2})?)/);
-    if (pm && Math.abs(Number(pm[1]) - m.price) > 0.005) {
+    if (pm && !m.price) {
+      issues.push({ severity: "high", problem: `No price is on file for ${m.name}, so the post must not state one ($${Number(pm[1]).toFixed(2)}).` });
+    } else if (pm && Math.abs(Number(pm[1]) - m.price) > 0.005) {
       issues.push({ severity: "high", problem: `${m.name} is listed at $${Number(pm[1]).toFixed(2)} but the menu price is $${m.price.toFixed(2)}.` });
     }
   }
@@ -45,7 +47,7 @@ export function verifyMenuClaims(text: string, profile: Profile) {
   }
 
   return {
-    menu_items_mentioned: mentioned.map((m) => `${m.name} ($${m.price.toFixed(2)})`),
+    menu_items_mentioned: mentioned.map((m) => (m.price ? `${m.name} ($${m.price.toFixed(2)})` : m.name)),
     prices_found: prices.map((p) => `$${p.toFixed(2)}`),
     deal_language_found: deals,
     full_menu: profile.menu.map((m) => m.name),
