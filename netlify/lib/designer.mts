@@ -58,7 +58,8 @@ MATCH THE SHOP'S POSTER STYLE (from the reference posts):
 - A bold themed backdrop that fits the concept: e.g. neon city at night, swirling sauce or syrup macro, glowing lava, autumn scene with Korean hanok architecture. Pick what fits THIS post.
 - Layered, designed typography like the references: one big stylized HEADLINE whose lettering matches the theme (drippy slime, brush/graffiti, elegant serif, calligraphy brush), plus a smaller tagline line. Optionally 1–2 tiny side callouts of 2–4 flavor words.
 - A small "Got Tiger" wordmark with "K-DOG • BOBA" underneath, near the top or bottom.
-- Use the references only for style, layout and typography. Do NOT copy their scenes, characters, monsters or wording.
+- Use the references only for style and typography. Do NOT copy their scenes, characters, monsters or wording.
+- If a reference already shows this same product, make a clearly DIFFERENT composition: new camera angle, new backdrop, new headline placement. The post must not look like a repost.
 
 THE HERO PRODUCT (large, sharp, appetizing, drawn accurately):
 ${itemLines.length ? itemLines.join("\n") : "A signature menu item from the shop."}
