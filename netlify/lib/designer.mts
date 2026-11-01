@@ -1,7 +1,8 @@
 // Designer step: turns a post's graphic concept into a finished, post-ready image.
 // Uses Google's image model through the Netlify AI Gateway (no API key of our own).
 // The model is given the shop's real logo and four of its real Instagram posts as references.
-import { GoogleGenAI, type Part } from "@google/genai";
+import type { Part } from "@google/genai";
+import { geminiClient, isUnauthorized } from "./gateway.mts";
 import { getStore } from "@netlify/blobs";
 import type { MenuItem, Profile } from "./defaults.mts";
 import type { Graphic, Post } from "./types.mts";
@@ -83,7 +84,8 @@ function message(e: unknown) {
 }
 
 export async function generateGraphic(post: Post, profile: Profile, origin: string, tweak?: string): Promise<Graphic> {
-  const ai = new GoogleGenAI({});
+  let ai = geminiClient();
+  let retriedAuth = false;
   const items = itemsOf(post, profile);
   const [logo, ...styles] = await Promise.all([loadRef(origin, LOGO), ...styleRefsFor(items).map((p) => loadRef(origin, p))]);
   const styleRefs = styles.filter((s): s is Part => !!s);
@@ -93,7 +95,9 @@ export async function generateGraphic(post: Post, profile: Profile, origin: stri
   parts.push(...styleRefs);
 
   let lastErr: unknown;
-  for (const model of imageModels()) {
+  const models = imageModels();
+  for (let i = 0; i < models.length; i++) {
+    const model = models[i];
     try {
       const res = await ai.models.generateContent({
         model,
@@ -118,6 +122,12 @@ export async function generateGraphic(post: Post, profile: Profile, origin: stri
       };
     } catch (e) {
       lastErr = e;
+      if (isUnauthorized(e) && !retriedAuth) {
+        retriedAuth = true;
+        ai = geminiClient(true); // retry once with the gateway's own key
+        i--;
+        continue;
+      }
       const msg = message(e);
       if (/not found|404|not supported|unknown model/i.test(msg)) continue;
       throw e;

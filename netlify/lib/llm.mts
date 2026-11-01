@@ -1,7 +1,8 @@
 // A small agent loop on top of the Anthropic SDK.
 // On Netlify, the AI Gateway injects ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL,
 // so `new Anthropic()` works with no key of our own.
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
+import { anthropicClient, isUnauthorized } from "./gateway.mts";
 import type { TraceStep } from "./types.mts";
 
 export type JsonSchema = { type: "object"; properties: Record<string, unknown>; required?: string[] };
@@ -63,7 +64,8 @@ export async function runAgent<R>(opts: {
 }): Promise<{ result: R; trace: TraceStep[]; model: string; turns: number }> {
   const { system, userMessage, tools, finalTool } = opts;
   const maxTurns = opts.maxTurns ?? 8;
-  const client = new Anthropic();
+  let client = anthropicClient();
+  let retriedAuth = false;
   const allTools = [...tools, finalTool];
   const apiTools: Anthropic.Tool[] = allTools.map(({ name, description, input_schema }) => ({ name, description, input_schema }));
   const trace: TraceStep[] = [];
@@ -86,6 +88,11 @@ export async function runAgent<R>(opts: {
           messages,
         });
       } catch (e) {
+        if (isUnauthorized(e) && !retriedAuth) {
+          retriedAuth = true;
+          client = anthropicClient(true); // retry once with the gateway's own key
+          continue;
+        }
         const status = errorStatus(e);
         const msg = e instanceof Error ? e.message : String(e);
         if ((status === 404 || (status === 400 && /model/i.test(msg))) && mi < modelList.length - 1) {
