@@ -2,7 +2,7 @@
 // Uses Google's image model through the Netlify AI Gateway (no API key of our own).
 // The model is given the shop's real logo and four of its real Instagram posts as references.
 import type { Part } from "@google/genai";
-import { geminiClient, isUnauthorized } from "./gateway.mts";
+import { geminiAvailable, geminiClient, isUnauthorized } from "./gateway.mts";
 import { getStore } from "@netlify/blobs";
 import type { MenuItem, Profile } from "./defaults.mts";
 import type { Graphic, Post } from "./types.mts";
@@ -28,7 +28,7 @@ function imageModels() {
 }
 
 export function imageAvailable() {
-  return !!(Netlify.env.get("GEMINI_API_KEY") || Netlify.env.get("GOOGLE_GEMINI_BASE_URL")) && Netlify.env.get("FORCE_OFFLINE") !== "1";
+  return geminiAvailable() && Netlify.env.get("FORCE_OFFLINE") !== "1";
 }
 
 async function loadRef(origin: string, path: string): Promise<Part | null> {

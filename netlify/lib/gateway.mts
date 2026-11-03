@@ -11,10 +11,32 @@ export function anthropicClient(useGatewayKey = false) {
   return new Anthropic({ apiKey: apiKey ?? env("NETLIFY_AI_GATEWAY_KEY"), baseURL: env("ANTHROPIC_BASE_URL") });
 }
 
+/**
+ * Google image client. If Netlify didn't pass the Google-specific settings (this can happen when the
+ * site's settings get close to Netlify's ~4 KB limit), fall back to the gateway's general key and
+ * address, which every provider shares.
+ */
 export function geminiClient(useGatewayKey = false) {
-  const apiKey = useGatewayKey ? env("NETLIFY_AI_GATEWAY_KEY") : env("GEMINI_API_KEY");
-  const baseUrl = env("GOOGLE_GEMINI_BASE_URL");
-  return new GoogleGenAI({ apiKey: apiKey ?? env("NETLIFY_AI_GATEWAY_KEY"), ...(baseUrl ? { httpOptions: { baseUrl } } : {}) });
+  const apiKey = useGatewayKey
+    ? env("NETLIFY_AI_GATEWAY_KEY") ?? env("GEMINI_API_KEY")
+    : env("GEMINI_API_KEY") ?? env("NETLIFY_AI_GATEWAY_KEY") ?? env("ANTHROPIC_API_KEY");
+  const baseUrl = env("GOOGLE_GEMINI_BASE_URL") ?? gatewayBaseUrl();
+  // Names only (never values), so the logs show which settings Netlify passed in.
+  const present = ["GEMINI_API_KEY", "GOOGLE_GEMINI_BASE_URL", "NETLIFY_AI_GATEWAY_KEY", "NETLIFY_AI_GATEWAY_URL", "ANTHROPIC_API_KEY", "URL"].filter((k) => !!env(k));
+  console.log(`[ai-gateway] image client settings present: ${present.join(", ") || "none"}`);
+  return new GoogleGenAI({ apiKey, ...(baseUrl ? { httpOptions: { baseUrl } } : {}) });
+}
+
+/** The gateway lives at <site>/.netlify/ai for every provider. */
+function gatewayBaseUrl() {
+  const fromEnv = env("NETLIFY_AI_GATEWAY_URL") ?? env("ANTHROPIC_BASE_URL");
+  if (fromEnv) return fromEnv.replace(/\/+$/, "");
+  const site = env("URL");
+  return site ? `${site.replace(/\/+$/, "")}/.netlify/ai` : undefined;
+}
+
+export function geminiAvailable() {
+  return !!(env("GEMINI_API_KEY") || env("NETLIFY_AI_GATEWAY_KEY") || env("ANTHROPIC_API_KEY"));
 }
 
 export function isUnauthorized(e: unknown) {
