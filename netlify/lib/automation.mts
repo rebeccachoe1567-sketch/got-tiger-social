@@ -2,8 +2,9 @@
 // Trigger: every 15 minutes (schedule), or when the owner approves a post with "publish now" (event).
 // Steps: 1) collect due posts  2) final safety gate  3) publish  4) log + notify owner.
 import { finalGate, fullText } from "./checks.mts";
-import { addNotification, addRun, getProfile, listPosts, savePost, setMeta } from "./store.mts";
+import { addNotification, addRun, claim, getPost, getProfile, listPosts, release, savePost, setMeta } from "./store.mts";
 import { prettyLocal } from "./time.mts";
+import { errorRef } from "./validate.mts";
 import type { AutomationRun, AutomationStep, Post } from "./types.mts";
 
 type Facet = { index: { byteStart: number; byteEnd: number }; features: { $type: string; tag: string }[] };
@@ -17,7 +18,10 @@ async function publishToBluesky(text: string) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ identifier: handle, password }),
   });
-  if (!s.ok) throw new Error(`Bluesky login failed (${s.status})`);
+  if (!s.ok) {
+    console.error("Bluesky login failed", s.status, (await s.text()).slice(0, 500));
+    throw new Error(`Bluesky sign-in failed (status ${s.status})`);
+  }
   const session = (await s.json()) as { accessJwt: string; did: string; handle?: string };
   // Make hashtags clickable with facets (byte offsets).
   const enc = new TextEncoder();
@@ -38,7 +42,11 @@ async function publishToBluesky(text: string) {
       record: { $type: "app.bsky.feed.post", text, facets, createdAt: new Date().toISOString() },
     }),
   });
-  if (!r.ok) throw new Error(`Bluesky post failed (${r.status}): ${await r.text()}`);
+  if (!r.ok) {
+    // Keep Bluesky's response in the server log only; it is never stored on the post.
+    console.error("Bluesky post failed", r.status, (await r.text()).slice(0, 500));
+    throw new Error(`Bluesky rejected the post (status ${r.status})`);
+  }
   const out = (await r.json()) as { uri: string };
   const rkey = out.uri.split("/").pop();
   return `https://bsky.app/profile/${session.handle || handle}/post/${rkey}`;
@@ -60,8 +68,29 @@ async function notifyWebhook(message: string) {
   }
 }
 
+const LOCK = "automation-lock";
+
 export async function runPublishingAutomation(trigger: string): Promise<AutomationRun> {
   const startedAt = new Date();
+  // Only one automation run at a time (the 15-minute schedule and a "publish now" click can overlap).
+  if (!(await claim(LOCK, 2 * 60 * 1000))) {
+    return {
+      trigger,
+      startedAt: startedAt.toISOString(),
+      finishedAt: new Date().toISOString(),
+      steps: [{ step: 1, name: "Collect due posts", detail: "Another automation run is in progress; due posts will be published by that run or the next one." }],
+      published: 0,
+      held: 0,
+    };
+  }
+  try {
+    return await runLocked(trigger, startedAt);
+  } finally {
+    await release(LOCK);
+  }
+}
+
+async function runLocked(trigger: string, startedAt: Date): Promise<AutomationRun> {
   const profile = await getProfile();
   const steps: AutomationStep[] = [];
 
@@ -89,7 +118,11 @@ export async function runPublishingAutomation(trigger: string): Promise<Automati
   // STEP 3: Publish: Bluesky goes live if connected; other platforms go to the Got Tiger feed (simulated).
   const published: Post[] = [];
   const failed: Post[] = [];
-  for (const p of ready) {
+  for (const candidate of ready) {
+    // Each post can be published once: claim it, then re-read it in case it changed meanwhile.
+    if (!(await claim(`publish:${candidate.id}`, 365 * 86400000))) continue;
+    const p = await getPost(candidate.id);
+    if (!p || p.status !== "approved") continue;
     const text = fullText(p.draft.caption, p.draft.hashtags);
     try {
       let url: string | null = null;
@@ -101,8 +134,10 @@ export async function runPublishingAutomation(trigger: string): Promise<Automati
       await savePost(p);
       published.push(p);
     } catch (e) {
+      const ref = errorRef();
+      console.error(`[${ref}] publish ${p.id}`, e);
       p.status = "held";
-      p.heldReason = `Publishing error: ${e instanceof Error ? e.message : String(e)}`;
+      p.heldReason = `Publishing to ${p.platform} failed (ref ${ref}). Check the account, then approve again.`;
       await savePost(p);
       failed.push(p);
     }

@@ -15,51 +15,72 @@ const norm = (s: string) => s.toLowerCase().replace(/[’']/g, "'");
 const pricesOf = (m: MenuItem): number[] => [m.price, ...(m.sizes ?? []).map((x) => x.price)].filter((p) => p > 0);
 const fmt = (p: number) => `$${p.toFixed(2)}`;
 
+// Money amounts: "$5", "$ 5.25", "5.25 dollars", "5 bucks".
+const MONEY_RE = /\$\s?(\d+(?:\.\d{1,2})?)|(\d+(?:\.\d{1,2})?)\s?(?:dollars?|bucks|usd)\b/gi;
+const moneyIn = (s: string) => [...s.matchAll(MONEY_RE)].map((m) => ({ value: Number(m[1] ?? m[2]), index: m.index ?? 0, length: m[0].length }));
+const samePrice = (a: number, b: number) => Math.abs(a - b) < 0.005;
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 export function verifyMenuClaims(text: string, profile: Profile) {
   const issues: Issue[] = [];
   const t = norm(text);
   const found = profile.menu.filter((m) => t.includes(norm(m.name)));
   // If "Coconut Brown Sugar" is mentioned, don't also treat it as a mention of a shorter overlapping name.
   const mentioned = found.filter((m) => !found.some((n) => n !== m && n.name.length > m.name.length && norm(n.name).includes(norm(m.name))));
+
+  // Numbers that active promotions actually state, compared as numbers (not as text).
   const promoText = norm(profile.promotions.join(" | "));
+  const promoPrices = moneyIn(promoText).map((m) => m.value);
+  const promoPercents = [...promoText.matchAll(/(\d+(?:\.\d+)?)\s?%/g)].map((m) => Number(m[1]));
 
-  // Prices: every $ amount must exist on the menu or in an active promotion.
-  const priceRe = /\$\s?(\d+(?:\.\d{1,2})?)/g;
-  const prices = [...text.matchAll(priceRe)].map((m) => Number(m[1]));
+  // 1) Every money amount must be a real menu price or a price stated in an active promotion.
+  const prices = moneyIn(t);
   for (const p of prices) {
-    const onMenu = profile.menu.some((m) => pricesOf(m).some((q) => Math.abs(q - p) < 0.005));
-    const inPromo = promoText.includes(String(p));
-    if (!onMenu && !inPromo) issues.push({ severity: "high", problem: `Price $${p.toFixed(2)} does not match any menu item or active promotion.` });
-  }
-  // Item-specific price: "<item> ... $x" within 40 chars must match that item.
-  for (const m of mentioned) {
-    const idx = t.indexOf(norm(m.name));
-    const window = text.slice(idx, idx + m.name.length + 40);
-    const pm = window.match(/\$\s?(\d+(?:\.\d{1,2})?)/);
-    const valid = pricesOf(m);
-    if (pm && !valid.length) {
-      issues.push({ severity: "high", problem: `No price is on file for ${m.name}, so the post must not state one (${fmt(Number(pm[1]))}).` });
-    } else if (pm && !valid.some((q) => Math.abs(q - Number(pm[1])) < 0.005)) {
-      issues.push({ severity: "high", problem: `${m.name} is listed at ${fmt(Number(pm[1]))} but the menu says ${valid.map(fmt).join(" / ")}.` });
-    }
+    const onMenu = profile.menu.some((m) => pricesOf(m).some((q) => samePrice(q, p.value)));
+    const inPromo = promoPrices.some((q) => samePrice(q, p.value));
+    if (!onMenu && !inPromo) issues.push({ severity: "high", problem: `Price ${fmt(p.value)} does not match any menu item or active promotion.` });
   }
 
-  // Promotions: deal language must match an active promotion.
-  const dealRe = /(\d+\s?%\s?off|bogo|buy one|free\b|half off|discount|coupon|deal\b|sale\b)/gi;
-  const deals = [...new Set([...text.matchAll(dealRe)].map((m) => m[1].toLowerCase()))];
+  // 2) A price next to an item (right after it, or just before it) must be that item's price.
+  //    Every mention of every item is checked, not just the first.
+  const mentions = mentioned
+    .flatMap((m) => [...t.matchAll(new RegExp(escapeRe(norm(m.name)), "g"))].map((x) => ({ item: m, start: x.index ?? 0, end: (x.index ?? 0) + m.name.length })))
+    .sort((a, b) => a.start - b.start);
+  mentions.forEach((mention, i) => {
+    const nextStart = mentions[i + 1]?.start ?? t.length;
+    const after = prices.filter((p) => p.index >= mention.end && p.index < Math.min(mention.end + 40, nextStart));
+    const before = prices.filter((p) => p.index + p.length <= mention.start && p.index + p.length >= mention.start - 3);
+    const near = [...before, ...after];
+    const valid = pricesOf(mention.item);
+    for (const p of near) {
+      if (!valid.length) issues.push({ severity: "high", problem: `No price is on file for ${mention.item.name}, so the post must not state one (${fmt(p.value)}).` });
+      else if (!valid.some((q) => samePrice(q, p.value) || promoPrices.some((pp) => samePrice(pp, p.value))))
+        issues.push({ severity: "high", problem: `${mention.item.name} is listed at ${fmt(p.value)} but the menu says ${valid.map(fmt).join(" / ")}.` });
+    }
+  });
+
+  // 3) Deal language must match an active promotion.
+  const dealRe = /(\d+(?:\.\d+)?\s?%\s?off|bogo|buy one|free\b|half off|discount|coupon|deal\b|sale\b)/gi;
+  const deals = [...new Set([...t.matchAll(dealRe)].map((m) => m[1].toLowerCase()))];
   for (const d of deals) {
-    const pct = d.match(/(\d+)\s?%/);
-    const ok = pct ? promoText.includes(`${pct[1]}%`) : promoText.length > 0 && (promoText.includes(d) || ["discount", "deal", "sale"].includes(d));
+    const pct = d.match(/(\d+(?:\.\d+)?)\s?%/);
+    const ok = pct
+      ? promoPercents.some((q) => q === Number(pct[1]))
+      : ["discount", "deal", "sale"].includes(d)
+        ? profile.promotions.length > 0
+        : new RegExp(`\\b${escapeRe(d)}\\b`).test(promoText);
     if (!ok) issues.push({ severity: "high", problem: `Mentions "${d}" but no matching promotion is active. Active: ${profile.promotions.join("; ") || "none"}.` });
   }
 
+  // De-duplicate identical problems.
+  const unique = issues.filter((x, i) => issues.findIndex((y) => y.problem === x.problem) === i);
   return {
     menu_items_mentioned: mentioned.map((m) => (pricesOf(m).length ? `${m.name} (${pricesOf(m).map(fmt).join(" / ")})` : m.name)),
-    prices_found: prices.map((p) => `$${p.toFixed(2)}`),
+    prices_found: prices.map((p) => fmt(p.value)),
     deal_language_found: deals,
     full_menu: profile.menu.map((m) => m.name),
-    issues,
-    passed: !issues.some((i) => i.severity === "high"),
+    issues: unique,
+    passed: !unique.some((i) => i.severity === "high"),
   };
 }
 

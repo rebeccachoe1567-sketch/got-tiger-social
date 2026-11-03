@@ -5,7 +5,8 @@
 import { runReviewer, runStrategist, runWriter } from "./agents.mts";
 import { stepToken } from "./auth.mts";
 import { generateGraphic, imageAvailable } from "./designer.mts";
-import { getLane, getPost, getProfile, getRun, listLanes, listPosts, saveLane, savePost, saveRun } from "./store.mts";
+import { claim, getActiveRun, getLane, getPost, getProfile, getRun, listLanes, listPosts, saveLane, savePost, saveRun, setActiveRun, useQuota } from "./store.mts";
+import { errorRef } from "./validate.mts";
 import type { Lane, Post, RoundSummary, RunMeta } from "./types.mts";
 
 export const MAX_ROUNDS = 3; // first draft + up to 2 revisions
@@ -14,8 +15,22 @@ export type StepPayload = { runId: string; step: StepName; lane?: number; round?
 
 export const stepKey = (p: StepPayload) => `${p.runId}:${p.step}:${p.lane ?? "-"}:${p.round ?? "-"}`;
 
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const newId = () => crypto.randomUUID().replace(/-/g, "").slice(0, 10);
+
+// Spending limits (override with environment variables if needed).
+const limit = (name: string, fallback: number) => Math.max(0, Number(Netlify.env.get(name)) || fallback);
+export const MAX_RUNS_PER_DAY = () => limit("MAX_RUNS_PER_DAY", 8);
+export const MAX_GRAPHICS_PER_DAY = () => limit("MAX_GRAPHICS_PER_DAY", 30);
+const RUN_TIMEOUT_MS = 10 * 60 * 1000;
+
+export class LimitError extends Error {}
+
+/** Logs the real error and returns a message that is safe to show publicly. */
+function publicError(e: unknown, what: string) {
+  const ref = errorRef();
+  console.error(`[${ref}] ${what}`, e);
+  return `${what} failed (ref ${ref}). Try again in a minute.`;
+}
 
 export async function dispatch(origin: string, payload: StepPayload) {
   const res = await fetch(`${origin}/api/internal/step`, {
@@ -27,8 +42,17 @@ export async function dispatch(origin: string, payload: StepPayload) {
 }
 
 export async function startRun(goal: string, count: number, origin: string): Promise<RunMeta> {
+  // Only one run at a time.
+  const active = await getActiveRun();
+  if (active && Date.now() - active.at < RUN_TIMEOUT_MS) {
+    const view = await runView(active.id);
+    if (view && (view.run.status === "planning" || view.run.status === "running")) throw new LimitError("A run is already in progress. Wait for it to finish.");
+  }
+  // Daily cap on runs (each run can make up to 5 posts and 5 graphics).
+  if (!(await useQuota("runs", MAX_RUNS_PER_DAY()))) throw new LimitError(`Daily limit reached (${MAX_RUNS_PER_DAY()} runs). It resets at midnight UTC.`);
   const run: RunMeta = { id: newId(), goal, count, status: "planning", createdAt: new Date().toISOString() };
   await saveRun(run);
+  await setActiveRun(run.id);
   await dispatch(origin, { runId: run.id, step: "plan" });
   return run;
 }
@@ -43,6 +67,8 @@ export async function runView(id: string) {
 }
 
 export async function runStep(p: StepPayload, origin: string) {
+  // Each step runs once, even if the same signed request is delivered twice.
+  if (!(await claim(`step:${stepKey(p)}`))) return;
   try {
     if (p.step === "plan") return await planStep(p.runId, origin);
     if (p.lane === undefined) throw new Error("Lane is required");
@@ -53,10 +79,10 @@ export async function runStep(p: StepPayload, origin: string) {
     console.error("pipeline step failed", p, e);
     if (p.step === "plan") {
       const run = await getRun(p.runId);
-      if (run) await saveRun({ ...run, status: "error", error: message(e) });
+      if (run) await saveRun({ ...run, status: "error", error: publicError(e, "Planning") });
     } else if (p.lane !== undefined) {
       const lane = await getLane(p.runId, p.lane);
-      if (lane) await saveLane(p.runId, { ...lane, state: "error", error: message(e) });
+      if (lane) await saveLane(p.runId, { ...lane, state: "error", error: publicError(e, p.step === "design" ? "The graphic" : "This post") });
     }
   }
 }
@@ -101,6 +127,8 @@ async function reviewStep(runId: string, laneIndex: number, round: number, origi
     return;
   }
 
+  // A post is created once per lane, even if this step were to run twice.
+  if (!(await claim(`post:${runId}:${laneIndex}`))) return;
   const run = await getRun(runId);
   const post = await savePost(buildPost(lane, run?.summary, runId));
   lane.postId = post.id;
@@ -123,7 +151,7 @@ function buildPost(lane: Lane, strategySummary: string | undefined, runId: strin
       guardrail: x.review!.guardrail_override ?? null,
     }));
   return {
-    id: newId().slice(0, 8),
+    id: `${runId}${lane.index}`, // deterministic, so a repeat can never create a second post
     createdAt: new Date().toISOString(),
     platform: lane.plan.platform,
     plan: lane.plan,
@@ -145,6 +173,10 @@ async function designStep(runId: string, laneIndex: number, origin: string) {
   if (!post) throw new Error("Post not found");
   if (!imageAvailable()) {
     await saveLane(runId, { ...lane, state: "done", error: "Graphics are only generated on the live site." });
+    return;
+  }
+  if (!(await useQuota("graphics", MAX_GRAPHICS_PER_DAY()))) {
+    await saveLane(runId, { ...lane, state: "done", error: `Daily graphic limit reached (${MAX_GRAPHICS_PER_DAY()}). Generate it from Approvals tomorrow.` });
     return;
   }
   const profile = await getProfile();

@@ -7,13 +7,14 @@
 // Posts are only CREATED by the server-side pipeline, never from the browser.
 import type { Config, Context } from "@netlify/functions";
 import { z } from "zod";
-import { requireOwner } from "../lib/auth.mts";
+import { isOwner, requireOwner } from "../lib/auth.mts";
 import { runPublishingAutomation } from "../lib/automation.mts";
 import { generateGraphic, imageAvailable } from "../lib/designer.mts";
-import { deletePost, getPost, getProfile, listPosts, savePost } from "../lib/store.mts";
+import { MAX_GRAPHICS_PER_DAY } from "../lib/pipeline.mts";
+import { deletePost, getPost, getProfile, listPosts, release, savePost, useQuota } from "../lib/store.mts";
 import { localToUtc, utcToLocal } from "../lib/time.mts";
 import type { Post } from "../lib/types.mts";
-import { ApproveBody, GraphicBody, parseBody, PostEditBody, RejectBody } from "../lib/validate.mts";
+import { ApproveBody, errorRef, GraphicBody, parseBody, PostEditBody, RejectBody } from "../lib/validate.mts";
 
 const notFound = () => Response.json({ error: "Not found" }, { status: 404 });
 
@@ -27,9 +28,17 @@ function applyEdits(post: Post, body: z.infer<typeof PostEditBody>) {
 
 export default async (req: Request, context: Context) => {
   const { id, action } = context.params;
-  if (req.method === "GET" && !id) return Response.json(await listPosts());
+  if (req.method === "GET" && !id) {
+    // Newest 60 posts. Visitors get a copy cached at Netlify's edge for 20 seconds, so repeated
+    // requests can't force heavy reads; the signed-in owner always gets fresh data.
+    const owner = await isOwner(context);
+    const headers: Record<string, string> = owner
+      ? { "cache-control": "no-store" }
+      : { "cache-control": "public, max-age=0, must-revalidate", "netlify-cdn-cache-control": "public, s-maxage=20, stale-while-revalidate=60", "netlify-vary": "cookie=gt_session" };
+    return Response.json(await listPosts(60), { headers });
+  }
 
-  const denied = requireOwner(context);
+  const denied = await requireOwner(context);
   if (denied) return denied;
   if (!id || !/^[a-z0-9]{6,20}$/.test(id)) return notFound();
   const post = await getPost(id);
@@ -56,12 +65,16 @@ export default async (req: Request, context: Context) => {
     if ("error" in body) return body.error;
     if (body.data.headline !== undefined) post.draft.headline = body.data.headline;
     if (body.data.tagline !== undefined) post.draft.tagline = body.data.tagline;
+    if (!(await useQuota("graphics", MAX_GRAPHICS_PER_DAY()))) {
+      return Response.json({ error: `Daily graphic limit reached (${MAX_GRAPHICS_PER_DAY()}). It resets at midnight UTC.` }, { status: 429 });
+    }
     try {
       post.image = await generateGraphic(post, profile, new URL(req.url).origin, body.data.tweak || undefined);
       return Response.json({ post: await savePost(post) });
     } catch (e) {
-      console.error("graphic", e);
-      return Response.json({ error: `Designer failed: ${e instanceof Error ? e.message : String(e)}` }, { status: 500 });
+      const ref = errorRef();
+      console.error(`[${ref}] graphic`, e);
+      return Response.json({ error: `The graphic couldn't be created (ref ${ref}). Try again in a minute.` }, { status: 500 });
     }
   }
 
@@ -73,6 +86,8 @@ export default async (req: Request, context: Context) => {
     if (isNaN(when.getTime())) return Response.json({ error: "Invalid date." }, { status: 400 });
     post.scheduledFor = when.toISOString();
     post.scheduledLocal = utcToLocal(when, profile.timezone);
+    if (post.status === "published") return Response.json({ error: "This post is already published." }, { status: 409 });
+    if (post.status === "held") await release(`publish:${post.id}`); // the owner chose to try again
     post.status = "approved";
     post.approvedAt = new Date().toISOString();
     delete post.heldReason;

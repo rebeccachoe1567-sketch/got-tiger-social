@@ -79,6 +79,14 @@ ${headline ? `- Headline: "${headline}"\n` : ""}${tagline ? `- Tagline: "${tagli
 RULES: No prices, dates, URLs, phone numbers, discounts or health claims. No people or faces. No other brand names. Keep all text and the logo away from the outer 6% so nothing gets cropped.`;
 }
 
+/** Only PNG, JPEG and WebP are stored, decided from the file's own bytes (never SVG or HTML). */
+export function sniffImage(b: Buffer): "image/png" | "image/jpeg" | "image/webp" | null {
+  if (b.length > 12 && b[0] === 0x89 && b.toString("ascii", 1, 4) === "PNG") return "image/png";
+  if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+  if (b.length > 12 && b.toString("ascii", 0, 4) === "RIFF" && b.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+  return null;
+}
+
 function message(e: unknown) {
   return e instanceof Error ? e.message : String(e);
 }
@@ -108,9 +116,11 @@ export async function generateGraphic(post: Post, profile: Profile, origin: stri
       const img = out.find((p) => p.inlineData?.mimeType?.startsWith("image/"));
       if (!img?.inlineData?.data) throw new Error("The image model returned no image");
       const bytes = Buffer.from(img.inlineData.data, "base64");
+      const type = sniffImage(bytes);
+      if (!type) throw new Error(`Image model returned an unsupported file type (${img.inlineData.mimeType})`);
       const version = Date.now().toString(36);
       await getStore({ name: "got-tiger-images", consistency: "strong" }).set(`${post.id}`, new Blob([bytes]), {
-        metadata: { contentType: img.inlineData.mimeType, version },
+        metadata: { contentType: type, version },
       });
       return {
         url: `/api/images/${post.id}?v=${version}`,

@@ -1,6 +1,9 @@
 // GET /api/images/:id -> the generated graphic for a post (add ?download=1 to save it)
+// Only PNG, JPEG and WebP are ever served, checked from the file's bytes.
 import type { Config, Context } from "@netlify/functions";
-import { getGraphic } from "../lib/designer.mts";
+import { getGraphic, sniffImage } from "../lib/designer.mts";
+
+const EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
 
 export default async (req: Request, context: Context) => {
   const id = context.params.id;
@@ -8,13 +11,16 @@ export default async (req: Request, context: Context) => {
   try {
     const r = await getGraphic(id);
     if (!r?.data) return new Response("Not found", { status: 404 });
-    const type = typeof r.metadata?.contentType === "string" ? r.metadata.contentType : "image/png";
+    const type = sniffImage(Buffer.from(r.data));
+    if (!type) return new Response("Not found", { status: 404 });
     const download = new URL(req.url).searchParams.has("download");
     return new Response(r.data, {
       headers: {
         "content-type": type,
+        "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'; sandbox",
         "cache-control": "public, max-age=31536000, immutable",
-        ...(download ? { "content-disposition": `attachment; filename="got-tiger-post-${id}.${type.split("/")[1] || "png"}"` } : {}),
+        ...(download ? { "content-disposition": `attachment; filename="got-tiger-post-${id}.${EXT[type]}"` } : {}),
       },
     });
   } catch {

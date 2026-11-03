@@ -14,7 +14,7 @@ export default async (req: Request, context: Context) => {
     return Response.json({ runs, notifications, lastRun, schedule: "Every 15 minutes" });
   }
   if (req.method !== "POST") return Response.json({ error: "Not found" }, { status: 404 });
-  const denied = requireOwner(context);
+  const denied = await requireOwner(context);
   if (denied) return denied;
   if (action === "run") return Response.json(await runPublishingAutomation("manual: owner clicked Run now"));
   if (action === "reset") {

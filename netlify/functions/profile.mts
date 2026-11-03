@@ -9,7 +9,7 @@ import { parseBody, ProfileBody } from "../lib/validate.mts";
 
 export default async (req: Request, context: Context) => {
   if (req.method === "GET") return Response.json(await getProfile());
-  const denied = requireOwner(context);
+  const denied = await requireOwner(context);
   if (denied) return denied;
   if (req.method === "PUT") {
     const body = await parseBody(req, ProfileBody);

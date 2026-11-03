@@ -261,7 +261,8 @@ $("#planForm").addEventListener("submit", async (e) => {
     if (view.run.mode === "offline") toast("⚠️ The AI wasn't reachable, so this run used backup mode (scripted captions). Wait a minute and run it again.", 9000);
     const ok = view.lanes.filter((l) => l.postId).length;
     const banner = $("#pipelineDone");
-    banner.innerHTML = `<div><b>${ok} post${ok === 1 ? "" : "s"} ready for your approval</b><div style="opacity:.75;font-size:14px">The agents never publish on their own. You approve each one.</div></div><button class="btn orange" onclick="show('approvals')">Review &amp; approve →</button>`;
+    banner.innerHTML = `<div><b>${ok} post${ok === 1 ? "" : "s"} ready for your approval</b><div style="opacity:.75;font-size:14px">The agents never publish on their own. You approve each one.</div></div><button class="btn orange" id="goApprovals">Review &amp; approve →</button>`;
+    $("#goApprovals").addEventListener("click", () => show("approvals"));
     banner.classList.remove("hidden");
     banner.scrollIntoView({ behavior: "smooth", block: "nearest" });
     refreshCount();

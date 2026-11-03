@@ -45,10 +45,17 @@ The browser can only start a run (`POST /api/runs`) and watch it (`GET /api/runs
 
 ## Security
 - **Owner sign-in:** every action that changes data or spends AI credits (start a run, edit, approve, reject, delete, generate graphics, save the profile, run or reset the automation) requires the owner session. Reads are public so the project can be reviewed.
-- The password lives only in the `OWNER_PASSWORD` environment variable. Sign-in sets a signed, HttpOnly, Secure, SameSite=Strict cookie that lasts 7 days. Wrong passwords are slowed down.
-- **Fails closed:** if `OWNER_PASSWORD` is missing, every protected action is refused.
-- **Validated input:** every request body is parsed with a zod schema (`netlify/lib/validate.mts`). Invalid input gets a clear 400 error instead of a crash.
-- `/api/status` shows only whether the AI and Bluesky are on, never setting names or values.
+- **Password rules:** the password lives only in the `OWNER_PASSWORD` environment variable and must be at least 14 characters; a shorter or missing password turns sign-in off (fails closed).
+- **Attempt limits:** 5 wrong passwords from one network in 15 minutes locks that network out for 15 minutes, and 20 wrong passwords from anywhere locks all sign-ins for 15 minutes.
+- **Server-side sessions:** sign-in creates a random session id stored on the server, sent as a signed, HttpOnly, Secure, SameSite=Strict cookie (7 days). Signing out deletes it on the server, so a copied cookie stops working. Changing the password ends every session.
+- **Spending limits:** one agent run at a time, at most `MAX_RUNS_PER_DAY` runs (default 8) and `MAX_GRAPHICS_PER_DAY` graphics (default 30) per day.
+- **No double posting:** the publishing automation takes a lock, and each post is claimed once before it is published. Every pipeline step and every post creation is claimed once, so repeated or overlapping requests can't duplicate work.
+- **Fact checks:** prices are compared as numbers against the menu and the prices stated in active promotions, at every mention of every item.
+- **Validated input with size limits:** every request body is size-limited and parsed with a zod schema (`netlify/lib/validate.mts`). Internal pipeline steps check the signature header and size before reading the body.
+- **Images:** only PNG, JPEG and WebP are stored and served, checked from the file bytes, with `nosniff` and a sandbox policy.
+- **Headers:** Content-Security-Policy, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy and HSTS on every page (`netlify.toml`).
+- **Errors:** visitors only see generic messages with a reference code; details (including Bluesky responses) go to the server log.
+- **Public reads are bounded:** the post list returns the newest 60 posts and is cached at the edge for 20 seconds for visitors.
 - No social media accounts are connected. The app cannot post to Instagram, Facebook or TikTok.
 
 ## Development
@@ -61,7 +68,8 @@ Deploys happen automatically from the `main` branch on Netlify.
 ## Environment variables (Netlify: Project configuration > Environment variables)
 | Variable | Required | Purpose |
 |---|---|---|
-| `OWNER_PASSWORD` | Yes | Owner sign-in password (8+ characters). Without it nothing can be changed. |
+| `OWNER_PASSWORD` | Yes | Owner sign-in password (14+ characters). Without it nothing can be changed. |
+| `MAX_RUNS_PER_DAY`, `MAX_GRAPHICS_PER_DAY` | No | Daily spending limits (defaults 8 and 30) |
 | `BLUESKY_HANDLE`, `BLUESKY_APP_PASSWORD` | No | Publish Bluesky posts for real (use an app password from Bluesky settings) |
 | `NOTIFY_WEBHOOK_URL` | No | Also send owner notifications to a Discord or Slack channel |
 | `AGENT_MODEL`, `IMAGE_MODEL` | No | Override the AI models |

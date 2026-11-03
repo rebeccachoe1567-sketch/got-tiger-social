@@ -8,7 +8,7 @@ export const StartRunBody = z.object({
   count: z.coerce.number().int().min(1).max(5).default(3),
 });
 
-export const LoginBody = z.object({ password: z.string().min(1).max(200) });
+export const LoginBody = z.object({ password: z.string().min(1).max(256) });
 
 const Hashtags = z.array(text(60).regex(/^#?[\p{L}\p{N}_]+$/u, "Hashtags can only contain letters, numbers and _")).max(30);
 
@@ -82,11 +82,33 @@ export const StepBody = z.object({
   round: z.number().int().min(1).max(3).optional(),
 });
 
-/** Parse a JSON body with a schema; returns either the data or a 400 Response. */
-export async function parseBody<S extends z.ZodTypeAny>(req: Request, schema: S): Promise<{ data: z.infer<S> } | { error: Response }> {
+/** Read a request body as text, refusing anything larger than maxBytes without reading it all. */
+export async function readLimited(req: Request, maxBytes: number): Promise<string | null> {
+  const declared = Number(req.headers.get("content-length") || "0");
+  if (declared > maxBytes) return null;
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
+}
+
+/** Parse a JSON body with a schema; returns either the data or a 400/413 Response. */
+export async function parseBody<S extends z.ZodTypeAny>(req: Request, schema: S, maxBytes = 16 * 1024): Promise<{ data: z.infer<S> } | { error: Response }> {
+  const t = await readLimited(req, maxBytes);
+  if (t === null) return { error: Response.json({ error: "Request is too large." }, { status: 413 }) };
   let raw: unknown;
   try {
-    const t = await req.text();
     raw = t ? JSON.parse(t) : {};
   } catch {
     return { error: Response.json({ error: "Request body must be valid JSON." }, { status: 400 }) };
@@ -98,4 +120,9 @@ export async function parseBody<S extends z.ZodTypeAny>(req: Request, schema: S)
     return { error: Response.json({ error: `Invalid request. ${where}${first?.message ?? "Check the fields."}` }, { status: 400 }) };
   }
   return { data: r.data };
+}
+
+/** A short id to quote in logs and in generic error messages. */
+export function errorRef() {
+  return Math.random().toString(36).slice(2, 8).toUpperCase();
 }
